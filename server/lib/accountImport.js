@@ -208,7 +208,13 @@ export async function importOne(item, opts = {}) {
     // Облачный пароль (2FA) из json или password.txt рядом. Без него аккаунт встанет
     // на первом же запросе подтверждения — а восстановить его потом неоткуда.
     twoFA: item.twoFA || null,
-    note: `Импортирован из ${source === 'tdata' ? 'tdata' : 'файла сессии'}${source !== item.kind ? ' (tdata под паролем — завёлся из .session рядом)' : ''}`,
+    /*
+     * Происхождение — КОД, а не фраза. Раньше сюда уезжала строка «Импортирован из
+     * tdata», и она занимала `note` — поле оператора. Сорок семь аккаунтов на боевом
+     * стояли с чужой заметкой, а своя им была уже некуда.
+     */
+    originCode: source === 'tdata' ? 'IMPORT_TDATA' : 'IMPORT_SESSION',
+    originParams: source !== item.kind ? { fallback: 'tdata_locked_used_session' } : {},
   })
 
   await saveSession(accountId, session)

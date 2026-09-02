@@ -37,6 +37,7 @@ import { assignProxies, proxyCapacity } from '@/api/accountImportApi'
 import { fetchActivity, setActivity, type ActivityMap, type SchedulePercent } from '@/api/accountActivityApi'
 import { startUnblock } from '@/api/accountActivityApi'
 import { useTabParam } from '@/shared/lib/useTabParam'
+import { lastSeenText, fullTimeText, statusText } from '@/shared/lib/accountText'
 
 const STATUS_ORDER: AccountStatus[] = ['active', 'working', 'warming', 'pause', 'floodwait', 'quarantine', 'spamblock', 'invalid', 'frozen', 'reauth']
 
@@ -196,15 +197,14 @@ const STATUS_HELP = [
   'Низкое доверие — низкий trust, модули работают консервативно.',
 ].join('\n')
 
-function formatProxyLabel(proxy: string) {
-  if (!proxy || proxy === '—') return 'Прямое подключение'
-  return proxy
-}
-
-/** Есть ли у аккаунта свой выход в сеть. Прочерк и пустая строка — одно и то же. */
-function hasProxy(a: { proxy?: string }) {
-  const p = String(a?.proxy || '').trim()
-  return !!p && p !== '—'
+/**
+ * Есть ли у аккаунта свой выход в сеть — то есть назначен ли прокси из каталога.
+ *
+ * Раньше проверяли непустоту строки подключения. Строки в аккаунте больше нет: она
+ * содержала логин и пароль и уезжала в браузер. Признак — наличие ссылки.
+ */
+function hasProxy(a: { proxyId?: string | null }) {
+  return !!a.proxyId
 }
 
 /**
@@ -228,7 +228,7 @@ const SORTS: Record<SortKey, (a: TgAccount, b: TgAccount) => number> = {
   default: (a, b) =>
     (Number(!!a.busyIn) - Number(!!b.busyIn))
     || (Number(!hasProxy(a)) - Number(!hasProxy(b)))
-    || str(a.proxy).localeCompare(str(b.proxy))
+    || str(a.proxyLabel).localeCompare(str(b.proxyLabel))
     || str(a.name || a.username).localeCompare(str(b.name || b.username), 'ru'),
   // MR-154: проблемные сверху, затем кириллица→латиница, затем по алфавиту.
   problems: (a, b) =>
@@ -302,10 +302,14 @@ export function AccountsPage() {
     }).catch(() => {})
   }, [])
   // Имя прокси по его URL (матчим по host:port — пароль/логин в строке могут отличаться форматом).
-  const proxyName = (url: string): string => {
-    const hp = (/^[a-z0-9]+:\/\/(?:[^@]*@)?([^/]+)/i.exec(url || '') || [])[1] || ''
-    return proxyNames[hp] || formatProxyLabel(url)
-  }
+  /*
+   * Подпись прокси — по ССЫЛКЕ.
+   *
+   * Здесь регуляркой выковыривали host:port из строки `socks5://логин:пароль@хост:порт`,
+   * то есть строка с паролем лежала в состоянии страницы. Теперь у аккаунта только
+   * идентификатор, а подпись приходит с сервера готовой.
+   */
+  const proxyName = (proxyId: string): string => proxyNames[proxyId] || '—'
   const [roleFilter, setRoleFilter] = useState('Все роли')
   // §1: «роль как группа» уходит — аккаунт работает ПОД КАМПАНИЕЙ. Закрепление живёт
   // в самой кампании (см. server/campaigns.js), поэтому accountsMeta.role не трогаем.
@@ -1312,7 +1316,7 @@ function AccountsTable(props: {
                     <RiskChip a={a} />
                   ) : (
                     <span className="inline-flex flex-wrap items-center gap-1.5">
-                      <StatusBadge status={a.status} until={a.statusUntil} reason={a.statusReason} />
+                      <StatusBadge status={a.status} until={a.statusUntil} reason={statusText(a.statusCode, a.statusParams)} />
                       {a.risk && a.risk.level !== 'none' && <RiskChip a={a} />}
                     </span>
                   )}
@@ -1408,7 +1412,7 @@ function AccountsTable(props: {
                         }
                         // §4.2: низкий шанс часа — самая частая причина «модуль ничего
                         // не делает». Без этой метки её ищут в логах задачи.
-                        if (typeof act.chanceNow === 'number' && act.chanceNow < 20 && (a.proxy && a.proxy !== '—')) {
+                        if (typeof act.chanceNow === 'number' && act.chanceNow < 20 && !!a.proxyId) {
                           // MR-129: не пишем явным текстом — только тихая иконка часов с подсказкой.
                           return (
                             <Tip
@@ -1451,7 +1455,11 @@ function AccountsTable(props: {
                     </div>
                   </td>
                 )}
-                {showCol('lastSeen') && <td className="px-4 py-3 text-muted">{a.lastSeen}</td>}
+                {showCol('lastSeen') && (
+                  <Tip text={fullTimeText(a.lastSeenAt)}>
+                    <td className="px-4 py-3 text-muted">{lastSeenText(a.lastSeenAt)}</td>
+                  </Tip>
+                )}
                 {showCol('proxy') && (
                   // MR-129: прокси задаётся прямо из списка — клик по ячейке открывает «Сменить прокси».
                   // Плюс состояние: нет прокси / прокси не отвечает (помечен нерабочим в каталоге) —
@@ -1463,7 +1471,7 @@ function AccountsTable(props: {
                       ? 'Аккаунт ходит через ваш IP — тот же, что у остальных без прокси. Для Telegram это одна группа: находит один аккаунт и добивает похожие. Нажмите, чтобы назначить прокси.'
                       : a.proxyOk === false
                         ? 'Прокси не отвечает и помечен нерабочим в каталоге. Нажмите, чтобы назначить живой — иначе задачи будут падать.'
-                        : `${a.proxy} — нажмите, чтобы сменить`}>
+                        : `${a.proxyLabel || 'прокси'} — нажмите, чтобы сменить`}>
                       <button
                         type="button"
                         onClick={() => props.onProxy(a)}
@@ -1478,7 +1486,7 @@ function AccountsTable(props: {
                             <AlertTriangle size={11} className="shrink-0" /> прокси не отвечает · сменить
                           </span>
                         ) : (
-                          <span className="text-muted group-hover/px:text-spark-300">{props.proxyName ? props.proxyName(a.proxy) : formatProxyLabel(a.proxy)}</span>
+                          <span className="text-muted group-hover/px:text-spark-300">{props.proxyName ? props.proxyName(a.proxyId || '') : (a.proxyLabel || '—')}</span>
                         )}
                         <Server size={11} className="shrink-0 opacity-0 transition-opacity group-hover/px:opacity-100" />
                       </button>
@@ -1512,7 +1520,7 @@ function AccountsTable(props: {
                     <RiskChip a={a} />
                   ) : (
                     <span className="inline-flex flex-wrap items-center gap-1.5">
-                      <StatusBadge status={a.status} until={a.statusUntil} reason={a.statusReason} />
+                      <StatusBadge status={a.status} until={a.statusUntil} reason={statusText(a.statusCode, a.statusParams)} />
                       {a.risk && a.risk.level !== 'none' && <RiskChip a={a} />}
                     </span>
                   )}

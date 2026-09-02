@@ -3,7 +3,6 @@ import path from 'path'
 import { mutateJson } from './lib/jsonStore.js'
 import { getSupabase, supabaseEnabled } from './lib/supabase.js'
 import { decryptSecret, secretForStorage } from './lib/secretBox.js'
-import { withProxyStrings } from './lib/proxyLink.js'
 import { SESSIONS_DIR } from './config.js'
 
 function sbA() { return supabaseEnabled() ? getSupabase() : null }
@@ -54,15 +53,22 @@ const COLUMNS = [
   ['createdAt',       'created_at',        'ts'],
   ['userId',          'tg_user_id',        'text'],
   ['role',            'role',              'text'],
-  ['project',         'project',           'text'],
   ['note',            'note',              'text'],
+  /*
+   * Происхождение аккаунта — КОДОМ. Раньше система писала «Импортирован из tdata» в
+   * `note`, то есть в заметку оператора: своё и служебное было не отличить, а смена
+   * формулировки означала бы UPDATE по боевым данным.
+   */
+  ['originCode',      'origin_code',       'text'],
+  ['originParams',    'origin_params',     'json'],
   ['avatarColor',     'avatar_color',      'text'],
   ['service',         'is_service',        'flag'],
   ['platform',        'is_platform',       'flag'],
   ['statusSince',     'status_since',      'ts'],
   ['statusUntil',     'status_until',      'ts'],
-  ['statusReason',    'status_reason',     'text'],
   ['statusCode',      'status_code',       'text'],
+  // Числа к коду статуса: {"trust":74,"threshold":70}. Текст собирает интерфейс.
+  ['statusParams',    'status_params',     'json'],
   ['statusBy',        'status_by',         'text'],
   ['prevStatus',      'prev_status',       'text'],
   ['statusBefore',    'status_before',     'text'],
@@ -90,6 +96,7 @@ const KEEP_LEGACY_JSON_KEYS = true
 
 /** Значение меты → значение колонки. `null` означает «пусто», а не «не трогать». */
 function toCol(v, type) {
+  if (type === 'json') return v && typeof v === 'object' ? v : {}
   if (type === 'flag') return !!v
   if (v === undefined || v === null || v === '') return null
   if (type === 'ts') { const t = Number(v); return Number.isFinite(t) && t > 0 ? new Date(t).toISOString() : null }
@@ -100,6 +107,7 @@ function toCol(v, type) {
 
 /** Значение колонки → значение меты. `undefined` означает «в колонке пусто». */
 function fromCol(v, type) {
+  if (type === 'json') return v && typeof v === 'object' ? v : undefined
   if (v === undefined || v === null) return undefined
   if (type === 'ts') { const t = new Date(v).getTime(); return Number.isFinite(t) ? t : undefined }
   if (type === 'bool' || type === 'flag') return !!v
@@ -200,7 +208,6 @@ const metaFile = () => process.env.ACCOUNTS_META_FILE || path.join(path.dirname(
 
 const DEFAULT_META = {
   role: 'Резерв',
-  project: 'incubator_ai',
   country: 'ua',
   status: 'active',
   inTrash: false,
@@ -225,12 +232,18 @@ const DEFAULT_META = {
   platform: false,
 }
 
+/**
+ * Мета всех аккаунтов — КАК ОНА ЛЕЖИТ, без подклеенных строк подключения.
+ *
+ * Здесь стояла обёртка `withProxyStrings`: она на каждом чтении меты дочитывала весь
+ * каталог прокси и расшифровывала все пароли, чтобы положить каждому аккаунту готовую
+ * строку `socks5://логин:пароль@хост:порт`. Читателей меты в коде под сорок, и платили
+ * за это все — включая те места, где прокси вообще не нужен.
+ *
+ * Строка подключения нужна ровно там, где подключаются. Её берут явно —
+ * `accountProxyUrl(meta)`, одна строка по первичному ключу.
+ */
 export async function loadAllMeta() {
-  return withProxyStrings(await loadAllMetaRaw())
-}
-
-/** Мета как она лежит в хранилище — без собранных строк подключения. */
-async function loadAllMetaRaw() {
   const db = sbA()
   if (db) {
     // `*` вместо `id, data`: мета теперь собирается из колонок, а не из одного jsonb.
@@ -289,9 +302,20 @@ export function accountLabel(meta, accountId) {
   return `#${String(accountId || '').slice(-6)}`
 }
 
+/**
+ * Мета одного аккаунта из УЖЕ прочитанной карты — с теми же умолчаниями.
+ *
+ * Нужна там, где перебирают парк: `getAccountMeta` на каждом шаге цикла читает таблицу
+ * целиком (а с MR-262 — ещё и каталог прокси), поэтому на списке из сотни аккаунтов
+ * получалось сто чтений всей меты вместо одного. Читаем карту один раз — берём из неё.
+ * @param {Record<string, object>} all @param {string} accountId
+ */
+export function metaOf(all, accountId) {
+  return { ...DEFAULT_META, ...(all?.[accountId] || {}) }
+}
+
 export async function getAccountMeta(accountId) {
-  const all = await loadAllMeta()
-  return { ...DEFAULT_META, ...(all[accountId] || {}) }
+  return metaOf(await loadAllMeta(), accountId)
 }
 
 /**

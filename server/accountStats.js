@@ -12,6 +12,7 @@ import { countryFromPhone } from './accountsMeta.js'
 import { Api } from 'telegram/tl/index.js'
 import { accountFingerprint } from './lib/deviceFingerprint.js'
 import { recordAction } from './actionLog.js'
+import { accountProxyUrl } from './proxies.js'
 
 const DAY = 24 * 60 * 60 * 1000
 /**
@@ -42,41 +43,45 @@ function sleep(ms) {
 }
 
 /** Разобрать строку прокси в структурированный вид (без секретов пароля). */
-function describeProxy(raw) {
-  if (!raw || raw === '—') {
-    return { raw: '', protocol: null, scheme: null, ip: null, port: null, login: null, configured: false }
-  }
-  const parsed = parseProxy(raw)
-  let protocol = null
-  try {
-    protocol = new URL(raw).protocol.replace(':', '').toUpperCase()
-  } catch { /* ignore */ }
-  const proto = protocol || (parsed?.socksType ? `SOCKS${parsed.socksType}` : parsed ? 'HTTP' : null)
+/**
+ * Описание прокси для карточки — ИЗ ЗАПИСИ КАТАЛОГА, а не из строки подключения.
+ *
+ * Раньше сюда приходил собранный URL, и поле `raw` уезжало в ответ целиком — то есть
+ * вместе с логином и паролем прокси. Открыть карточку аккаунта было достаточно, чтобы
+ * получить рабочие доступы к прокси; в браузере они оседали в кэше и в истории.
+ *
+ * Теперь наружу идёт то, что показывают: подпись, протокол, адрес, порт, логин. Пароля
+ * в записи для показа нет вовсе — `getProxy` его не отдаёт.
+ *
+ * @param {object|null} p запись каталога без пароля
+ */
+function describeProxy(p) {
+  if (!p) return { id: null, label: '', protocol: null, scheme: null, ip: null, port: null, login: null, configured: false }
+  const scheme = p.scheme === 'http' ? 'http' : 'socks5'
   return {
-    raw,
-    protocol: proto,
+    id: p.id || null,
+    label: p.label || '',
+    protocol: scheme === 'http' ? 'HTTP' : 'SOCKS5',
     // Схема в том виде, какой ждёт probeProxyProtocol (socks5/socks4/http).
-    scheme: proto ? (proto.startsWith('SOCKS') ? (proto === 'SOCKS4' ? 'socks4' : 'socks5') : 'http') : null,
-    ip: parsed?.ip ?? null,
-    port: parsed?.port ?? null,
-    login: parsed?.username ?? null,
-    configured: !!parsed,
+    scheme,
+    ip: p.host || null,
+    port: p.port ?? null,
+    login: p.username || null,
+    configured: !!(p.host && p.port),
   }
 }
 
 /**
  * Признан ли прокси нерабочим совсем недавно (см. DEAD_PROXY_TRUST_MS).
- * Смотрим каталог, а если прокси там нет (назначен вручную строкой) — отметку в мете
- * аккаунта: иначе для «ручных» прокси быстрый путь не работал и карточка каждый раз
- * заново ждала пробу.
- * @param {string} url @param {object} meta
+ *
+ * Запись каталога уже прочитана вызывающим — искать её по строке подключения не нужно и
+ * нельзя: поиск по host+port был обходным путём тех времён, когда связи не было. Связь
+ * есть, она называется `proxy_id`.
+ *
+ * @param {object|null} p запись каталога @param {object} meta
  */
-async function recentlyDeadProxy(url, meta = {}) {
-  if (!url || url === '—') return false
-  try {
-    const p = await findProxyByUrl(url)
-    if (p) return p.status === 'dead' && !!p.lastCheckAt && (Date.now() - p.lastCheckAt) < DEAD_PROXY_TRUST_MS
-  } catch { /* каталог недоступен — падаем на мету */ }
+function recentlyDeadProxy(p, meta = {}) {
+  if (p) return p.status === 'dead' && !!p.lastCheckAt && (Date.now() - p.lastCheckAt) < DEAD_PROXY_TRUST_MS
   return meta.proxyWorking === false && !!meta.proxyCheckAt && (Date.now() - meta.proxyCheckAt) < DEAD_PROXY_TRUST_MS
 }
 
@@ -86,17 +91,14 @@ async function recentlyDeadProxy(url, meta = {}) {
  * «ручных» прокси вне каталога — отметка в мете аккаунта.
  * @returns {Promise<'ok'|'down'|null>} null — вердикта ещё нет
  */
-export async function cachedProxyVerdict(url, meta = {}) {
-  if (!url || url === '—') return null
-  try {
-    const p = await findProxyByUrl(url)
-    if (p && p.lastCheckAt) {
-      if (p.status === 'ok') return 'ok'
-      // dead — хост не отвечает; bad — не тот протокол или не пускает в Telegram.
-      if (p.status === 'dead' || p.status === 'bad') return 'down'
-      return null
-    }
-  } catch { /* каталог недоступен — падаем на мету */ }
+export function cachedProxyVerdict(p, meta = {}) {
+  if (p && p.lastCheckAt) {
+    if (p.status === 'ok') return 'ok'
+    // dead — хост не отвечает; bad — не тот протокол или не пускает в Telegram.
+    if (p.status === 'dead' || p.status === 'bad') return 'down'
+    return null
+  }
+  // Прокси вне каталога (назначен вручную) — верим отметке в мете аккаунта.
   if (meta.proxyCheckAt && typeof meta.proxyWorking === 'boolean') return meta.proxyWorking ? 'ok' : 'down'
   return null
 }
@@ -338,7 +340,9 @@ export async function buildAccountStats(accountId, opts = {}) {
   const sw = getSwitchPause(accountId)
   const switchPause = sw ? { ...sw, text: `Перерыв после «${sw.fromLabel}»: ${fmtDelay(sw.coolMs)}, осталось ${fmtDelay(sw.leftMs)}` } : null
 
-  const proxy = describeProxy(meta.proxy)
+  // Одна строка каталога по ссылке из меты. Без пароля: карточке он не нужен.
+  const записьПрокси = meta.proxyId ? await getProxy(meta.proxyId).catch(() => null) : null
+  const proxy = describeProxy(записьПрокси)
   const activity = await collectActivity(accountId, meta.name || '', 40)
   const actionCount = activity.filter((e) => e.type === 'action').length
   const hadFloodOrQuarantine = activity.some((e) => /flood|карантин|quarantine/i.test(e.label)) || meta.status === 'quarantine'
@@ -369,10 +373,10 @@ export async function buildAccountStats(accountId, opts = {}) {
     blocked = 'no_proxy'
   } else if (sessionStr && !busyIn && !wantLive) {
     // Быстрый путь: берём вердикт из базы. Прокси нерабочий — так и говорим, сеть не трогаем.
-    const cached = await cachedProxyVerdict(meta.proxy, meta)
+    const cached = await cachedProxyVerdict(записьПрокси, meta)
     if (cached === 'down') { blocked = 'proxy_down'; proxy.working = false }
     else if (cached === 'ok') proxy.working = true
-  } else if (sessionStr && !busyIn && await recentlyDeadProxy(meta.proxy, meta)) {
+  } else if (sessionStr && !busyIn && recentlyDeadProxy(записьПрокси, meta)) {
     // Прокси уже признан нерабочим только что — не ждём сеть ещё раз (карточка
     // открывалась по 15с на каждом заходе). Через DEAD_PROXY_TRUST_MS проверим снова.
     blocked = 'proxy_down'
@@ -396,7 +400,7 @@ export async function buildAccountStats(accountId, opts = {}) {
     try {
       // createClient сам делает быстрый TCP-пинг прокси и падает за ~2.5с на мёртвом прокси
       // (MR-129) — карточка/каналы/группы больше не ждут таймаут подключения 12с.
-      client = await createClient(sessionStr, meta.proxy, accountFingerprint(accountId, meta))
+      client = await createClient(sessionStr, await accountProxyUrl(meta), accountFingerprint(accountId, meta))
       // Общий бюджет живой проверки. Даже с лимитом на каждый RPC карточка не должна
       // ждать десятки секунд: прокси, который принял соединение, но наружу не пускает,
       // держал «Загрузку данных из Telegram…» минутами (замер 12.08: >45с).
@@ -519,7 +523,8 @@ export async function buildAccountStats(accountId, opts = {}) {
       saved: !!sessionStr,
     },
     proxy: {
-      raw: proxy.raw,
+      id: proxy.id,
+      label: proxy.label,
       protocol: proxy.protocol,
       ip: proxy.ip,
       port: proxy.port,
@@ -580,7 +585,7 @@ export async function listAccountChannels(accountId) {
   const meta = await getAccountMeta(accountId)
   let client
   try {
-    client = await createClient(sessionStr, meta.proxy, accountFingerprint(accountId, meta))
+    client = await createClient(sessionStr, await accountProxyUrl(meta), accountFingerprint(accountId, meta))
     const dialogs = await client.getDialogs({ limit: 200 })
     const channels = []
     for (const d of dialogs) {
@@ -620,7 +625,7 @@ export async function leaveAccountChannel(accountId, channelId) {
   const meta = await getAccountMeta(accountId)
   let client
   try {
-    client = await createClient(sessionStr, meta.proxy, accountFingerprint(accountId, meta))
+    client = await createClient(sessionStr, await accountProxyUrl(meta), accountFingerprint(accountId, meta))
     const dialogs = await client.getDialogs({ limit: 300 })
     const d = dialogs.find((x) => x.entity && x.entity.id?.toString?.() === String(channelId))
     if (!d || !d.entity) { await client.disconnect(); return { ok: false, error: 'not_found' } }
@@ -654,7 +659,7 @@ export async function listAccountChannelMessages(accountId, peer, limit = 30) {
   const meta = await getAccountMeta(accountId)
   let client
   try {
-    client = await createClient(sessionStr, meta.proxy, accountFingerprint(accountId, meta))
+    client = await createClient(sessionStr, await accountProxyUrl(meta), accountFingerprint(accountId, meta))
     const dialogs = await client.getDialogs({ limit: 300 })
     const uname = String(peer || '').replace(/^@/, '')
     const d = dialogs.find((x) => x.entity && (x.entity.id?.toString?.() === String(peer) || x.entity.username === uname || x.entity.usernames?.some?.((u) => u.username === uname)))
@@ -695,7 +700,7 @@ export async function listAccountFolders(accountId) {
   const meta = await getAccountMeta(accountId)
   let client
   try {
-    client = await createClient(sessionStr, meta.proxy, accountFingerprint(accountId, meta))
+    client = await createClient(sessionStr, await accountProxyUrl(meta), accountFingerprint(accountId, meta))
     const res = await client.invoke(new Api.messages.GetDialogFilters())
     const filters = res?.filters || res || []
     const folders = []

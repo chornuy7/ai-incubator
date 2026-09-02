@@ -1,12 +1,13 @@
 // MR-290: файловая система здесь больше не нужна — сессии переехали в базу, и всё
 // обращение к ним идёт через tgAuth.js.
-import { loadAllMeta, getAccountMeta, setAccountMeta, deleteAccountMeta, countryFromPhone, avatarColor } from './accountsMeta.js'
-import { loadSessionString, createClient, listSessionIds, deleteSession } from './tgAuth.js'
+import { loadAllMeta, metaOf, getAccountMeta, setAccountMeta, deleteAccountMeta, countryFromPhone, avatarColor } from './accountsMeta.js'
+import { loadSessionString, sessionPresence, createClient, listSessionIds, deleteSession } from './tgAuth.js'
 import { getAccountLock } from './lib/accountLocks.js'
 import { getAllTrustCache } from './lib/trustCache.js'
 import { accountFingerprint } from './lib/deviceFingerprint.js'
 import { computeAccountRisk } from './lib/accountRisk.js'
 import { cachedProxyVerdict } from './accountStats.js'
+import { accountProxyUrl, getProxy } from './proxies.js'
 
 // MR-290: список аккаунтов строится по сессиям, а сессии переехали в базу. Перечисление
 // живёт теперь в tgAuth.js рядом с чтением и записью — иначе при следующем изменении
@@ -53,15 +54,16 @@ function toAccountDto(accountId, meta, me, sessionOk) {
     username: me?.username || meta.username || `user_${accountId.slice(-6)}`,
     userId: me?.id?.toString?.() ?? meta.userId ?? '',
     role: meta.role || 'Резерв',
-    project: meta.project || 'incubator_ai',
     country: meta.country || countryFromPhone(phone),
     status,
     lastSeen: formatLastSeen(meta.updatedAt || meta.createdAt),
-    // MR-290: наружу идут ОБА — ссылка (по ней панель считает занятость и назначает)
-    // и собранная строка для показа. Строку собирает сервер из каталога, поэтому в
-    // браузер больше не уезжают логины и пароли прокси.
+    /*
+     * ТОЛЬКО ссылка. Собранная строка отсюда убрана: она содержит логин и пароль прокси,
+     * и в ответе это выглядело как `socks5://kcfdfepc:zvkbhwey@138.201.202.99:7569` —
+     * рабочие доступы к прокси уезжали в браузер, оседали в кэше и в истории. Что
+     * показать в таблице, панель берёт из каталога по этой ссылке.
+     */
     proxyId: meta.proxyId || null,
-    proxy: meta.proxy || '—',
     // note патчится через PATCH /accounts/:id, но в DTO его не было — заметка
     // сохранялась и пропадала. Нужна, в частности, чтобы видеть источник импорта.
     note: meta.note || '',
@@ -136,13 +138,30 @@ export async function tgListAccounts(opts = {}) {
   const only = opts.only ? String(opts.only) : null
   const ids = (await listSessionIds()).filter((id) => !only || id === only)
   const accounts = []
-  const trustAll = await getAllTrustCache()
+  /*
+   * Всё, что одинаково для ВСЕГО парка, читается до цикла и по одному разу.
+   *
+   * Здесь стояли `getAccountMeta` и `loadSessionString` — по вызову на аккаунт. Пока мета
+   * лежала в одном jsonb, а сессии файлами на диске, это стоило дёшево и не бросалось в
+   * глаза. После переезда в базу цена каждого вызова изменилась: `getAccountMeta` читает
+   * ВСЮ таблицу меты, а с MR-262 тянет следом ещё и весь каталог прокси с расшифровкой
+   * паролей; `loadSessionString` — отдельный запрос по аккаунту. На парке из шестидесяти
+   * трёх аккаунтов страница списка отправляла в базу больше двухсот запросов подряд
+   * вместо трёх, и открывалась во столько же раз дольше.
+   *
+   * Правило простое: внутри цикла по аккаунтам не должно остаться ни одного обращения,
+   * которое не зависит от конкретного аккаунта.
+   */
+  const [trustAll, allMeta, сСессией] = await Promise.all([
+    getAllTrustCache(),
+    loadAllMeta(),
+    sessionPresence(ids),
+  ])
 
   for (const accountId of ids) {
-    let meta = await getAccountMeta(accountId)
+    let meta = metaOf(allMeta, accountId)
     if (ownerId && !accountBelongsTo(meta, ownerId)) continue
-    const sessionStr = await loadSessionString(accountId)
-    if (!sessionStr) continue
+    if (!сСессией.has(accountId)) continue
 
     let me = null
     // Без проверки считаем сессию рабочей: файл на месте, а реальный вердикт даст
@@ -150,7 +169,10 @@ export async function tgListAccounts(opts = {}) {
     let sessionOk = true
     if (verify) {
       try {
-        const client = await createClient(sessionStr, meta.proxy, accountFingerprint(accountId, meta))
+        // Строка сессии нужна ТОЛЬКО в этой ветке. Здесь на каждый аккаунт и так идёт
+        // подключение к Telegram, рядом с которым одно чтение ничего не решает.
+        const sessionStr = await loadSessionString(accountId)
+        const client = await createClient(sessionStr, await accountProxyUrl(meta), accountFingerprint(accountId, meta))
         me = await client.getMe()
         sessionOk = true
         await client.disconnect()
@@ -180,18 +202,15 @@ export async function tgListAccounts(opts = {}) {
     if (t) { dto.trustScore = t.score; dto.trustBand = t.band }
     // §6.3 (AM-002): прокси «рабочий», если его нет (прямое подключение) либо он не 'dead'.
     // Ручной прокси не из каталога → статус неизвестен → не помечаем нерабочим (не прячем зря).
-    const purl = meta.proxy && meta.proxy !== '—' ? meta.proxy : null
-    // ЕДИНЫЙ источник правды с вкладкой «Прокси» (важно: раньше здесь противоречие).
-    // Вкладка карточки показывает «Работает / Не отвечает» через cachedProxyVerdict
-    // (accountStats.buildAccountStats). Список же считал свой proxyOk по другой формуле
-    // (isUsableProxy(каталог) && meta.proxyWorking!==false) — и они расходились: каталог
-    // «ok», но stale meta.proxyWorking=false → шапка/риск «прокси не отвечает», а вкладка
-    // «Работает» (и наоборот). Теперь ОБА зовут одну функцию → противоречие исключено.
+    // ЕДИНЫЙ источник правды с вкладкой «Прокси»: обе стороны зовут одну функцию, иначе
+    // список и карточка расходятся прямо на экране («ok» в каталоге против устаревшего
+    // meta.proxyWorking). Запись берётся ПО ССЫЛКЕ — одна строка по первичному ключу.
     // Вердикт: 'down' → нерабочий; 'ok'/null (ещё не проверен) → не пугаем «не отвечает».
-    const proxyVerdict = purl ? await cachedProxyVerdict(purl, meta) : null
-    dto.proxyOk = !purl || proxyVerdict !== 'down'
+    const записьПрокси = meta.proxyId ? await getProxy(meta.proxyId).catch(() => null) : null
+    const proxyVerdict = cachedProxyVerdict(записьПрокси, meta)
+    dto.proxyOk = !meta.proxyId || proxyVerdict !== 'down'
     // MR-131: прокси мёртв ИЛИ отсутствует — обе ситуации риск, но разные (разделяем).
-    dto.noProxy = !purl
+    dto.noProxy = !meta.proxyId
     dto.risk = computeAccountRisk({ status: dto.status, proxyOk: dto.proxyOk, noProxy: dto.noProxy, trustBand: dto.trustBand })
     accounts.push(dto)
   }

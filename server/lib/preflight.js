@@ -14,7 +14,7 @@
  */
 import { getAccountMeta } from '../accountsMeta.js'
 import { loadSessionString } from '../tgAuth.js'
-import { findProxyByUrl } from '../proxies.js'
+import { getProxy } from '../proxies.js'
 import { isAccountRunnable } from './protection.js'
 
 /** Сколько доверяем свежей пометке «прокси нерабочий» (как в карточке аккаунта). */
@@ -54,13 +54,14 @@ export async function preflightAccounts(accountIds = []) {
     const session = await loadSessionString(accountId).catch(() => '')
     if (!session) { problems.push({ accountId, name, reason: 'нет сессии — нужна переавторизация' }); continue }
 
-    const proxyUrl = meta.proxy && meta.proxy !== '—' ? meta.proxy : ''
-    if (!proxyUrl) { problems.push({ accountId, name, reason: 'не назначен прокси' }); continue }
+    if (!meta.proxyId) { problems.push({ accountId, name, reason: 'не назначен прокси' }); continue }
 
     // Прокси признан нерабочим — каталогом или последней живой проверкой карточки.
+    // Берём по ссылке: поиск по строке подключения при совпадении host:port мог найти
+    // ЧУЖОЙ прокси, а после смены адреса не находил нужный вовсе.
     let deadProxy = false
     try {
-      const p = await findProxyByUrl(proxyUrl)
+      const p = await getProxy(meta.proxyId)
       if (p) deadProxy = p.status === 'dead' && !!p.lastCheckAt && (Date.now() - p.lastCheckAt) < DEAD_PROXY_TRUST_MS
       else deadProxy = meta.proxyWorking === false && !!meta.proxyCheckAt && (Date.now() - meta.proxyCheckAt) < DEAD_PROXY_TRUST_MS
     } catch { /* каталог недоступен — не придираемся */ }

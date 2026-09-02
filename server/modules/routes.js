@@ -315,7 +315,8 @@ modulesRouter.post('/:moduleKey/tasks', async (req, res) => {
         const { clusterWarnings: warn } = await import('../lib/antiCluster.js')
         const all = await loadAllMeta()
         const proxyByAccount = {}
-        for (const id of settings.accountIds || []) proxyByAccount[id] = all[id]?.proxy || ''
+        // Ссылкой, а не строкой подключения: кластер — это общий прокси, то есть общий id.
+        for (const id of settings.accountIds || []) proxyByAccount[id] = all[id]?.proxyId || ''
         clusterWarnings = warn({
           proxyByAccount,
           accountIds: settings.accountIds || [],

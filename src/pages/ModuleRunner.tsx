@@ -34,6 +34,7 @@ import { FloatingBar } from '@/features/modules/shared'
 import { cn, compact, uid } from '@/shared/lib/utils'
 import type { ParseResult } from '@/shared/types'
 import { useTabParam } from '@/shared/lib/useTabParam'
+import { lastSeenText } from '@/shared/lib/accountText'
 
 /** Плавный скролл к якорю; если нативный smooth не сработал (некоторые встроенные
  *  браузеры/webview делают его no-op) — мгновенный доскролл, чтобы кнопка всегда работала. */
@@ -1255,7 +1256,7 @@ function GgrModule({ cfg }: { cfg: ModuleConfig }) {
                 </div>
               </div>
               <div className="mt-4 grid grid-cols-2 gap-2.5">
-                {[['Гео', `${({ ua: '🇺🇦', ru: '🇷🇺', kz: '🇰🇿', pl: '🇵🇱', de: '🇩🇪' } as Record<string, string>)[active.country] ?? ''} ${active.country.toUpperCase()}`], ['Возраст группы', active.lastSeen], ['Прошлый балл', `${((active.ggr ?? 60) / 10).toFixed(1)}`], ['Активность', 'нет активности']].map(([k, v]) => (
+                {[['Гео', `${({ ua: '🇺🇦', ru: '🇷🇺', kz: '🇰🇿', pl: '🇵🇱', de: '🇩🇪' } as Record<string, string>)[active.country] ?? ''} ${active.country.toUpperCase()}`], ['Возраст группы', lastSeenText(active.lastSeenAt)], ['Прошлый балл', `${((active.ggr ?? 60) / 10).toFixed(1)}`], ['Активность', 'нет активности']].map(([k, v]) => (
                   <div key={k} className="rounded-xl border border-line bg-elevated p-3"><div className="text-xs text-muted">{k}</div><div className="mt-0.5 font-semibold text-fg">{v}</div></div>
                 ))}
               </div>

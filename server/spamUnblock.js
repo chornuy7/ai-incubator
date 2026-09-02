@@ -13,6 +13,7 @@ import { accountFingerprint } from './lib/deviceFingerprint.js'
 import { getAccountMeta, setAccountStatus, setAccountMeta } from './accountsMeta.js'
 import { appealSpamblock } from './lib/spamAppeal.js'
 import { waitAccountWork, endAccountWork } from './lib/accountBusy.js'
+import { accountProxyUrl } from './proxies.js'
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
@@ -55,7 +56,7 @@ async function appealOne(accountId, taskId, shouldStop) {
   }
   let client
   try {
-    client = await createClient(sessionStr, meta.proxy, accountFingerprint(accountId, meta))
+    client = await createClient(sessionStr, await accountProxyUrl(meta), accountFingerprint(accountId, meta))
     const res = await appealSpamblock(client)
     try { await client.disconnect() } catch { /* ignore */ }
     if (res.state === 'clean') {

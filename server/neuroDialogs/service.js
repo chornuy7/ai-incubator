@@ -3,13 +3,14 @@ import { getAccountMeta } from '../accountsMeta.js'
 import { mapTelegramError } from '../lib/protection.js'
 import { fetchInboxDialogs, fetchDialogMessages, sendDialogMessage, markDialogRead, fetchMessageThumb } from './inbox.js'
 import { accountFingerprint } from '../lib/deviceFingerprint.js'
+import { accountProxyUrl } from '../proxies.js'
 
 /** @param {string} accountId @param {(client: import('telegram').TelegramClient, meta: object) => Promise<T>} fn @template T */
 async function withClient(accountId, fn) {
   const meta = await getAccountMeta(accountId)
   const sessionStr = await loadSessionString(accountId)
   if (!sessionStr) throw new Error('NO_SESSION')
-  const client = await createClient(sessionStr, meta.proxy, accountFingerprint(accountId, meta))
+  const client = await createClient(sessionStr, await accountProxyUrl(meta), accountFingerprint(accountId, meta))
   try {
     return await fn(client, meta)
   } finally {

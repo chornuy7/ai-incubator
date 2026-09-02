@@ -4,6 +4,7 @@ import { Avatar, StatusBadge } from '@/shared/ui'
 import { STATUS_META } from '@/mocks/store'
 import type { TgAccount } from '@/shared/types'
 import { cn } from '@/shared/lib/utils'
+import { statusText } from '@/shared/lib/accountText'
 
 /**
  * Как назвать аккаунт, у которого Telegram не отдал имя.
@@ -130,7 +131,7 @@ export function AccountRail({
                     занимал бы место в каждой строке и перестал бы читаться. */}
                 {a.status !== 'active' && (
                   <div className="mt-0.5">
-                    <StatusBadge status={a.status} until={a.statusUntil} reason={a.statusReason} />
+                    <StatusBadge status={a.status} until={a.statusUntil} reason={statusText(a.statusCode, a.statusParams)} />
                   </div>
                 )}
               </div>

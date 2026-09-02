@@ -81,7 +81,9 @@ const activityStore = mapStore({
       // Старая форма снята: держать её рядом с новой — значит однажды разойтись.
       delete out.profile.recoveryPerHour
     }
-    return out
+    // ПАРА, а не объект: mapStore.readAll делает `const [k, v] = fromRow(r)`. Вернуть
+    // отсюда объект значит уронить чтение всей таблицы на первой же строке.
+    return [r.account_id, out]
   },
   afterRead: readSchedules,
   afterWrite: writeSchedules,

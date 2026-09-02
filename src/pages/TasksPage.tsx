@@ -218,7 +218,7 @@ type TaskProblem = { bad: number; total: number; items: { name: string; reason: 
 // Возвращает короткую причину проблемы или '' если аккаунт в порядке.
 function acctProblem(a?: TgAccount): string {
   if (!a) return 'нет в системе'
-  if (!a.proxy || a.proxy === '—') return 'нет прокси'
+  if (!a.proxyId) return 'нет прокси'
   if (a.proxyOk === false) return 'прокси не отвечает'
   if (a.status === 'reauth') return 'нужна переавторизация'
   if (a.status === 'invalid') return 'невалиден'
@@ -1078,7 +1078,7 @@ function TaskAccounts({ accountIds, accounts }: { accountIds: string[]; accounts
   /** Коротко о проблеме — видно прямо в списке. */
   const problemOf = (a?: TgAccount) => {
     if (!a) return ''
-    if (!a.proxy || a.proxy === '—') return 'нет прокси'
+    if (!a.proxyId) return 'нет прокси'
     if (a.proxyOk === false) return 'прокси не отвечает'
     if (a.status === 'reauth') return 'нужна переавторизация'
     if (a.status === 'invalid') return 'невалиден'

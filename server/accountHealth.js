@@ -22,11 +22,12 @@
  * Занятых не трогаем: проверка — это ещё одно подключение той же сессией, а параллельный
  * логин роняет обе стороны.
  */
-import { getAccountMeta, setAccountMeta, setAccountStatus } from './accountsMeta.js'
+import { metaOf, setAccountMeta, setAccountStatus } from './accountsMeta.js'
 import { loadSessionString, createClient } from './tgAuth.js'
 import { accountFingerprint } from './lib/deviceFingerprint.js'
 import { getAccountLock } from './lib/accountLocks.js'
 import { getCronSync } from './cronSettings.js'
+import { accountProxyUrl } from './proxies.js'
 
 /** Как часто перепроверять один аккаунт. */
 export const HEALTH_EVERY_MS = 12 * 60 * 60 * 1000
@@ -56,13 +57,19 @@ export function classifyHealthError(err) {
   return null
 }
 
-/** Кого пора проверить: давно не проверяли, не занят и не в терминальном статусе. */
-async function dueAccounts(all, now, max) {
+/**
+ * Кого пора проверить: давно не проверяли, не занят и не в терминальном статусе.
+ *
+ * `allMeta` — уже прочитанная карта меты. Здесь стоял `getAccountMeta(a.id)`, то есть
+ * чтение ВСЕЙ таблицы меты (а с MR-262 — и каталога прокси) на каждый аккаунт, хотя
+ * нужная запись лежала в `a` прямо перед глазами.
+ */
+function dueAccounts(all, allMeta, now, max) {
   const out = []
   for (const a of all) {
     if (out.length >= max) break
     if (a.deletedAt || a.inTrash) continue
-    const meta = await getAccountMeta(a.id)
+    const meta = metaOf(allMeta, a.id)
     if (SKIP_STATUSES.has(meta.status || 'active')) continue
     if (getAccountLock(a.id)?.holders?.length) continue // занят задачей — не лезем второй сессией
     if (Number(meta.healthCheckedAt || 0) + (getCronSync().healthEveryH ?? 12) * 3600_000 > now) continue
@@ -80,13 +87,14 @@ export async function accountHealthTick(opts = {}) {
   const now = opts.now ?? Date.now()
   const out = { checked: 0, broken: 0, skipped: 0 }
   let all = []
+  let allMeta = {}
   try {
     const { loadAllMeta } = await import('./accountsMeta.js')
-    const meta = await loadAllMeta()
-    all = Object.entries(meta).map(([id, m]) => ({ id, ...m }))
+    allMeta = await loadAllMeta()
+    all = Object.entries(allMeta).map(([id, m]) => ({ id, ...m }))
   } catch { return out }
 
-  for (const { id, meta } of await dueAccounts(all, now, perTick)) {
+  for (const { id, meta } of dueAccounts(all, allMeta, now, perTick)) {
     let client = null
     try {
       const session = await loadSessionString(id)
@@ -95,7 +103,7 @@ export async function accountHealthTick(opts = {}) {
         out.broken += 1
         continue
       }
-      client = await createClient(session, meta.proxy, accountFingerprint(id, meta))
+      client = await createClient(session, await accountProxyUrl(meta), accountFingerprint(id, meta))
       await client.getMe()
       // Жив: помечаем время проверки, статус не трогаем — он мог быть осмысленным
       // (пауза, прогрев, карантин), и «жив» это не повод его сбрасывать.
