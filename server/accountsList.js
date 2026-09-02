@@ -30,6 +30,7 @@ import { getSupabase, supabaseEnabled } from './lib/supabase.js'
 import { sessionPresence } from './tgAuth.js'
 import { getAccountLock } from './lib/accountLocks.js'
 import { computeAccountRisk } from './lib/accountRisk.js'
+import { limitKind, geoRisk } from './lib/limitKind.js'
 import { avatarColor, countryFromPhone } from './accountsMeta.js'
 
 const VIEW = 'account_list'
@@ -122,6 +123,19 @@ export function rowToAccount(r, extra = {}) {
     : null
   const trust = r.trust_score == null ? null : { score: r.trust_score, band: r.trust_band || null }
   const занят = занятость(r.id)
+  const страна = r.country || countryFromPhone(phone)
+  /*
+   * MR-292: ЧТО именно с аккаунтом. Владелец 01.09: «нам нужно определять, что с
+   * аккаунтом, и давать чёткое понятие». Считаем здесь, а не в интерфейсе: иначе список
+   * и карточка разъедутся, как уже расходились по прокси.
+   */
+  const ограничение = limitKind({
+    status,
+    statusUntil: r.status_until ? Date.parse(r.status_until) : null,
+    statusUntilSource: r.status_until_source || '',
+  })
+  // Гео — фактор риска, а не вид ограничения: Telegram причину не называет (см. limitKind).
+  const гео = geoRisk({ country: страна }, прокси)
 
   return {
     id: r.id,
@@ -138,7 +152,7 @@ export function rowToAccount(r, extra = {}) {
       username: r.username || '',
       phone: phone && !phone.startsWith('+') ? `+${phone}` : phone,
       telegramUserId: r.tg_user_id || null,
-      country: r.country || countryFromPhone(phone),
+      country: страна,
       avatarColor: r.avatar_color || avatarColor(r.id),
     },
     status: {
@@ -166,11 +180,16 @@ export function rowToAccount(r, extra = {}) {
     },
     proxy: прокси,
     trust,
+    // Вид ограничения и что с ним делать — словами оператора, не кодом статуса.
+    limit: ограничение,
+    geo: гео,
     risk: computeAccountRisk({
       status,
       proxyOk: !прокси || прокси.ok,
       noProxy: !прокси,
       trustBand: trust?.band,
+      geo: гео,
+      limit: ограничение,
     }),
     busy: занят,
     origin: { code: r.origin_code || null, params: r.origin_params || {} },

@@ -25,6 +25,8 @@ export interface ApiAccount {
   proxy: null | { id: string; label: string; scheme: string | null; host: string | null; port: number | null; country: string | null; status: string; checkedAt: string | null; ok: boolean }
   trust: null | { score: number; band: string | null }
   risk?: TgAccount['risk']
+  limit?: TgAccount['limit']
+  geo?: TgAccount['geo']
   busy: null | { taskId: string; modules: { key: string; label: string }[] }
   origin: { code: string | null; params: Record<string, unknown> }
 }
@@ -88,6 +90,8 @@ export function toTgAccount(a: ApiAccount): ServerAccount {
     proxyOk: a.proxy ? a.proxy.ok : true,
     noProxy: !a.proxy,
     risk: a.risk,
+    limit: a.limit,
+    geo: a.geo ?? null,
     trustScore: a.trust?.score,
     trustBand: a.trust?.band as TgAccount['trustBand'],
     createdAt: a.createdAt ? Date.parse(a.createdAt) : 0,

@@ -1339,7 +1339,7 @@ function AccountsTable(props: {
                     <RiskChip a={a} />
                   ) : (
                     <span className="inline-flex flex-wrap items-center gap-1.5">
-                      <StatusBadge status={a.status} until={a.statusUntil} reason={statusText(a.statusCode, a.statusParams)} />
+                      <StatusBadge status={a.status} until={a.statusUntil} reason={statusText(a.statusCode, a.statusParams)} limit={a.limit} />
                       {a.risk && a.risk.level !== 'none' && <RiskChip a={a} />}
                     </span>
                   )}
@@ -1544,7 +1544,7 @@ function AccountsTable(props: {
                     <RiskChip a={a} />
                   ) : (
                     <span className="inline-flex flex-wrap items-center gap-1.5">
-                      <StatusBadge status={a.status} until={a.statusUntil} reason={statusText(a.statusCode, a.statusParams)} />
+                      <StatusBadge status={a.status} until={a.statusUntil} reason={statusText(a.statusCode, a.statusParams)} limit={a.limit} />
                       {a.risk && a.risk.level !== 'none' && <RiskChip a={a} />}
                     </span>
                   )}

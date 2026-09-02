@@ -2385,14 +2385,6 @@ if (cleared?.length) {
   console.log(`Reconcile: ${cleared.length} аккаунтов сняты с зависшего статуса «в работе»`)
 }
 
-// Авто-выход из временных статусов (floodwait/quarantine с истёкшим сроком) на старте (§3.3).
-try {
-  const { reconcileExpiredStatuses } = await import('./accountsMeta.js')
-  const back = await reconcileExpiredStatuses()
-  if (back.length) console.log(`Reconcile статусов: ${back.length} аккаунтов вернулись из временного статуса`)
-} catch (err) {
-  console.warn('[status] reconcileExpiredStatuses failed:', err)
-}
 
 /*
  * Выключатель фоновых задач: `SCHEDULERS=off`.
@@ -2420,6 +2412,25 @@ try {
   cron = await loadCronSettings()
 } catch (err) {
   console.warn('[cron] настройки не загрузились, идут значения по умолчанию:', err?.message || err)
+}
+
+/*
+ * Авто-выход из временных статусов: спамблок, флудвейт, карантин с истёкшим сроком (§3.3).
+ *
+ * MR-291: раньше это делалось ТОЛЬКО на старте — то есть между перезапусками не делалось
+ * вовсе. Аккаунт с часовым флудвейтом ждал не час, а до ближайшего рестарта; на проде
+ * 01.09 так стояли 29 аккаунтов со сроком, истёкшим пять дней назад. Один прогон здесь и
+ * дальше по таймеру: это чтение меты без походов в Telegram, дёшево.
+ */
+try {
+  const { reconcileExpiredStatuses } = await import('./accountsMeta.js')
+  const runStatus = () => reconcileExpiredStatuses()
+    .then((back) => back.length && console.log(`[status] вернулись из временного статуса: ${back.length} акк. (${back.map((b) => `${b.from}→${b.to}`).join(', ')})`))
+    .catch((e) => console.warn('[status] reconcile failed:', e?.message || e))
+  await runStatus()
+  if (SCHEDULERS_ON) setInterval(runStatus, (cron.statusTickMin ?? 5) * 60 * 1000)
+} catch (err) {
+  console.warn('[status] reconcileExpiredStatuses failed:', err)
 }
 
 if (SCHEDULERS_ON) try {

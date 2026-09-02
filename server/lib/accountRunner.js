@@ -196,11 +196,26 @@ export async function applySpamblockPolicy(task, accountId, store, accountName, 
    * ставили сутки «по типичному сроку», и аккаунт с часовым ограничением простаивал день,
    * а с недельным — выходил в работу рано и получал спамблок снова.
    */
-  const until = Number(opts.until) > Date.now()
+  /*
+   * MR-291: запоминаем не только срок, но и ОТКУДА он.
+   *
+   * Разница принципиальная. Срок от @SpamBot — факт: Telegram сам сказал, когда отпустит.
+   * Дефолтные сутки — наша догадка, и она ничего не значит: проверка 02.09 показала, что
+   * шесть аккаунтов из шести всё ещё в блоке спустя ПЯТЬ дней после «истёкшего» срока.
+   *
+   * По этому признаку решается, можно ли вернуть аккаунт в работу по таймеру или надо
+   * сперва переспросить бота. Вернуть под действующим ограничением хуже, чем подождать:
+   * действия под спамблоком его продлевают.
+   */
+  const отБота = Number(opts.until) > Date.now()
+  const until = отБота
     ? Number(opts.until)
     : Date.now() + (safety.spamblockHours ?? 24) * 3600 * 1000
-  await setStatus(accountId, 'spamblock', { code: 'SPAM', reason: 'Спамблок — аккаунт помечен и пропускается', until, task })
-  const откуда = Number(opts.until) > Date.now() ? ' (срок назвал @SpamBot)' : ''
+  await setStatus(accountId, 'spamblock', {
+    code: 'SPAM', reason: 'Спамблок — аккаунт помечен и пропускается', until, task,
+  })
+  await setAccountMeta(accountId, { statusUntilSource: отБота ? 'spambot' : 'default' }).catch(() => {})
+  const откуда = отБота ? ' (срок назвал @SpamBot)' : ''
   await store.appendLog(task, 'warning', `Спамблок — аккаунт выведен до ${logTime(until, true)}${откуда}`, accountName)
   await store.saveTask(task)
   return true

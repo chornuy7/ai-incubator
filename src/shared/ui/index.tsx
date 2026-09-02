@@ -275,10 +275,30 @@ export function Tip({ text, children, className }: { text?: string; children: Re
   )
 }
 
-export function StatusBadge({ status, until, reason }: { status: AccountStatus; until?: number | null; reason?: string }) {
+export function StatusBadge({ status, until, reason, limit }: {
+  status: AccountStatus; until?: number | null; reason?: string
+  /** MR-292: вид ограничения — он же решает, есть ли настоящий срок. */
+  limit?: { kind: string; label: string; what: string; until: number | null }
+}) {
   const m = STATUS_META[status]
-  const left = until && until > Date.now() ? formatLeft(until - Date.now()) : ''
-  const tip = [reason, until && until > Date.now() ? `Снимется автоматически ${new Date(until).toLocaleString('ru-RU')}` : ''].filter(Boolean).join(' · ')
+  /*
+   * MR-292: «ещё 4 ч» и «снимется автоматически» — обещание, и давать его можно только
+   * когда срок назвал САМ Telegram. Наш код при неизвестном сроке подставляет сутки по
+   * умолчанию; проверка 02.09 показала шесть аккаунтов из шести всё ещё в блоке спустя
+   * пять дней после такого «срока». Считать по нему часы — врать оператору.
+   *
+   * Когда вид ограничения не посчитан (limit не передали), ведём себя как раньше.
+   */
+  const ограничение = limit && limit.kind !== 'none' ? limit : null
+  const срок = ограничение ? ограничение.until : (until ?? null)
+  const left = срок && срок > Date.now() ? formatLeft(срок - Date.now()) : ''
+  const tip = [
+    reason,
+    ограничение?.what,
+    срок && срок > Date.now()
+      ? `Снимется автоматически ${new Date(срок).toLocaleString('ru-RU')}`
+      : ограничение?.kind === 'permanent' ? 'Срок Telegram не назвал — сам не снимется' : '',
+  ].filter(Boolean).join(' · ')
   const t = useTooltip<HTMLSpanElement>(tip || undefined)
   return (
     <span
