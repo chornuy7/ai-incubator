@@ -7,6 +7,7 @@ import { getAllTrustCache } from './lib/trustCache.js'
 import { accountFingerprint } from './lib/deviceFingerprint.js'
 import { computeAccountRisk } from './lib/accountRisk.js'
 import { cachedProxyVerdict } from './accountStats.js'
+import { accountProxyUrl, getProxy } from './proxies.js'
 
 // MR-290: список аккаунтов строится по сессиям, а сессии переехали в базу. Перечисление
 // живёт теперь в tgAuth.js рядом с чтением и записью — иначе при следующем изменении
@@ -53,15 +54,16 @@ function toAccountDto(accountId, meta, me, sessionOk) {
     username: me?.username || meta.username || `user_${accountId.slice(-6)}`,
     userId: me?.id?.toString?.() ?? meta.userId ?? '',
     role: meta.role || 'Резерв',
-    project: meta.project || 'incubator_ai',
     country: meta.country || countryFromPhone(phone),
     status,
     lastSeen: formatLastSeen(meta.updatedAt || meta.createdAt),
-    // MR-290: наружу идут ОБА — ссылка (по ней панель считает занятость и назначает)
-    // и собранная строка для показа. Строку собирает сервер из каталога, поэтому в
-    // браузер больше не уезжают логины и пароли прокси.
+    /*
+     * ТОЛЬКО ссылка. Собранная строка отсюда убрана: она содержит логин и пароль прокси,
+     * и в ответе это выглядело как `socks5://kcfdfepc:zvkbhwey@138.201.202.99:7569` —
+     * рабочие доступы к прокси уезжали в браузер, оседали в кэше и в истории. Что
+     * показать в таблице, панель берёт из каталога по этой ссылке.
+     */
     proxyId: meta.proxyId || null,
-    proxy: meta.proxy || '—',
     // note патчится через PATCH /accounts/:id, но в DTO его не было — заметка
     // сохранялась и пропадала. Нужна, в частности, чтобы видеть источник импорта.
     note: meta.note || '',
@@ -170,7 +172,7 @@ export async function tgListAccounts(opts = {}) {
         // Строка сессии нужна ТОЛЬКО в этой ветке. Здесь на каждый аккаунт и так идёт
         // подключение к Telegram, рядом с которым одно чтение ничего не решает.
         const sessionStr = await loadSessionString(accountId)
-        const client = await createClient(sessionStr, meta.proxy, accountFingerprint(accountId, meta))
+        const client = await createClient(sessionStr, await accountProxyUrl(meta), accountFingerprint(accountId, meta))
         me = await client.getMe()
         sessionOk = true
         await client.disconnect()
@@ -200,18 +202,15 @@ export async function tgListAccounts(opts = {}) {
     if (t) { dto.trustScore = t.score; dto.trustBand = t.band }
     // §6.3 (AM-002): прокси «рабочий», если его нет (прямое подключение) либо он не 'dead'.
     // Ручной прокси не из каталога → статус неизвестен → не помечаем нерабочим (не прячем зря).
-    const purl = meta.proxy && meta.proxy !== '—' ? meta.proxy : null
-    // ЕДИНЫЙ источник правды с вкладкой «Прокси» (важно: раньше здесь противоречие).
-    // Вкладка карточки показывает «Работает / Не отвечает» через cachedProxyVerdict
-    // (accountStats.buildAccountStats). Список же считал свой proxyOk по другой формуле
-    // (isUsableProxy(каталог) && meta.proxyWorking!==false) — и они расходились: каталог
-    // «ok», но stale meta.proxyWorking=false → шапка/риск «прокси не отвечает», а вкладка
-    // «Работает» (и наоборот). Теперь ОБА зовут одну функцию → противоречие исключено.
+    // ЕДИНЫЙ источник правды с вкладкой «Прокси»: обе стороны зовут одну функцию, иначе
+    // список и карточка расходятся прямо на экране («ok» в каталоге против устаревшего
+    // meta.proxyWorking). Запись берётся ПО ССЫЛКЕ — одна строка по первичному ключу.
     // Вердикт: 'down' → нерабочий; 'ok'/null (ещё не проверен) → не пугаем «не отвечает».
-    const proxyVerdict = purl ? await cachedProxyVerdict(purl, meta) : null
-    dto.proxyOk = !purl || proxyVerdict !== 'down'
+    const записьПрокси = meta.proxyId ? await getProxy(meta.proxyId).catch(() => null) : null
+    const proxyVerdict = cachedProxyVerdict(записьПрокси, meta)
+    dto.proxyOk = !meta.proxyId || proxyVerdict !== 'down'
     // MR-131: прокси мёртв ИЛИ отсутствует — обе ситуации риск, но разные (разделяем).
-    dto.noProxy = !purl
+    dto.noProxy = !meta.proxyId
     dto.risk = computeAccountRisk({ status: dto.status, proxyOk: dto.proxyOk, noProxy: dto.noProxy, trustBand: dto.trustBand })
     accounts.push(dto)
   }

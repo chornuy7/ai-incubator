@@ -520,11 +520,9 @@ export async function problems(opts = {}) {
     const st = String(m?.status || '')
     if (/ban|block/i.test(st)) accounts.banned.push({ id, status: st })
     else if (/flood/i.test(st) || m?.floodUntil > Date.now()) accounts.flood.push({ id, status: st, until: m?.floodUntil || 0 })
-    // Прокси хранится в поле `proxy` строкой, «—» означает «не назначен».
-    // Проверка на `proxyId` читала несуществующее поле и записывала в «без прокси»
-    // все аккаунты подряд.
-    const proxy = String(m?.proxy || '').trim()
-    if (!proxy || proxy === '—') accounts.noProxy.push({ id })
+    // Прокси — ССЫЛКА (MR-262/MR-290). Строки подключения в мете больше нет вовсе,
+    // поэтому «без прокси» — это пустой `proxyId`, а не пустая строка.
+    if (!String(m?.proxyId || '').trim()) accounts.noProxy.push({ id })
   }
 
   return {

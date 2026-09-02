@@ -212,7 +212,9 @@ async function warnAboutProxyCluster(task, store, accountIds) {
     const allMeta = await loadAllMeta()
     const byAccount = {}
     for (const id of accountIds) {
-      byAccount[id] = metaOf(allMeta, id)?.proxy || ''
+      // Сравниваем ССЫЛКУ, а не собранную строку: один и тот же прокси у двух аккаунтов
+      // — это один и тот же `proxy_id`, и никакой сборки строк для этого не нужно.
+      byAccount[id] = metaOf(allMeta, id)?.proxyId || ''
     }
     const gate = proxySpreadGate(byAccount, accountIds)
     if (!gate.ok) await store.appendLog(task, 'warning', `Риск кластера (§4.4): ${gate.reason}`)

@@ -212,6 +212,7 @@ test('мета аккаунта: каждая колонка из карты е�
     '2026-09-01-mr290-account-secrets.sql',
     '2026-09-01-mr290-accounts-meta-columns.sql',
     '2026-09-01-mr290-proxies-rework.sql',
+    '2026-09-02-mr290-accounts-list.sql',
   ])
   const known = new Set([
     // Колонки из schema.sql — он снимок, а не миграция, поэтому перечислены здесь.

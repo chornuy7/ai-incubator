@@ -13,6 +13,7 @@ import { STATUS_LABEL_RU } from './MonitoringTab'
 import { AccountCardBody } from '@/features/account-manager/AccountManagementModal'
 import { useTabParam } from '@/shared/lib/useTabParam'
 import { confirmDialog } from '@/shared/lib/dialog'
+import { statusText } from '@/shared/lib/accountText'
 
 /**
  * §10.10: управление аккаунтами из sudo-админки — полный список ВСЕХ аккаунтов
@@ -211,13 +212,13 @@ export function AccountsTab() {
                   </td>
                   <td className="px-3 py-2.5">
                     <span className={cn('font-medium', TONE[a.status] || 'text-spark-300')}>{STATUS_LABEL_RU[a.status] || a.status}</span>
-                    {!!a.statusReason && <span className="block max-w-[160px] truncate text-[10px] text-faint">{a.statusReason}</span>}
+                    {!!statusText(a.statusCode, a.statusParams) && <span className="block max-w-[160px] truncate text-[10px] text-faint">{statusText(a.statusCode, a.statusParams)}</span>}
                   </td>
                   <td className="px-3 py-2.5">
                     {a.trustScore != null ? <span className={cn('tabular-nums font-semibold', bandTone(a.trustBand))}>{a.trustScore}</span> : <span className="text-faint">—</span>}
                   </td>
                   <td className="px-3 py-2.5">
-                    {a.proxy ? <Wifi size={15} className="text-spark-400" /> : <WifiOff size={15} className="text-faint" />}
+                    {a.proxyId ? <Wifi size={15} className="text-spark-400" /> : <WifiOff size={15} className="text-faint" />}
                   </td>
                   <td className="px-3 py-2.5">
                     {a.busyIn ? <span className="rounded-md bg-iris-500/12 px-1.5 py-0.5 text-[11px] font-medium text-iris-200">{a.busyIn.moduleLabel}</span> : <span className="text-xs text-muted">свободен</span>}

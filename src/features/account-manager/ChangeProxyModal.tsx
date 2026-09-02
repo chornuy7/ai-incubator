@@ -6,11 +6,6 @@ import { fetchProxies, createProxy, isUsableProxy, type Proxy as ApiProxy } from
 import { useApp } from '@/mocks/store'
 import type { TgAccount } from '@/shared/types'
 
-function formatProxyLabel(proxy: string) {
-  if (!proxy || proxy === '—') return 'Прямое подключение'
-  return proxy
-}
-
 /**
  * Модалка «Сменить прокси» — выбор из базы прокси или ввод нового.
  * Вынесена из AccountsPage, чтобы переиспользовать и в карточке аккаунта (вкладка «Прокси»,
@@ -64,16 +59,17 @@ export function ChangeProxyModal({ acc, onClose, onSave }: { acc: TgAccount | nu
 
   useEffect(() => {
     if (!acc) return
-    const has = acc.proxy && acc.proxy !== '—'
-    setUseProxy(!!has)
-    setValue(has ? acc.proxy : '')
+    // Модалка правит НАЗНАЧЕНИЕ прокси, а не строку подключения: строки в аккаунте
+    // больше нет вовсе. Поле начинается пустым — прокси выбирают из каталога.
+    setUseProxy(!!acc.proxyId)
+    setValue('')
   }, [acc?.id])
 
   return (
     <Modal
       open={!!acc}
       onClose={onClose}
-      title={acc?.proxy && acc.proxy !== '—' ? 'Сменить прокси' : 'Добавить прокси'}
+      title={acc?.proxyId ? 'Сменить прокси' : 'Добавить прокси'}
       subtitle={acc?.name}
       icon={<Server size={22} />}
       size="sm"
@@ -154,7 +150,7 @@ export function ChangeProxyModal({ acc, onClose, onSave }: { acc: TgAccount | nu
               <p className="col-span-2 text-[11px] text-muted">Прокси попадёт в каталог модуля «Прокси» и будет назначен аккаунту. Статус/страна определяются при проверке.</p>
             </div>
           )}
-          <p className="mt-2 text-xs text-muted">Текущий: <span className="font-mono">{formatProxyLabel(acc?.proxy ?? '')}</span></p>
+          <p className="mt-2 text-xs text-muted">Текущий: <span className="font-mono">{acc?.proxyLabel || 'Прямое подключение'}</span></p>
         </>
       ) : (
         <p className="text-sm text-muted">Аккаунт будет подключаться напрямую, без SOCKS5/HTTP прокси.</p>

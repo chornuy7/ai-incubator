@@ -8,6 +8,7 @@ import { resolveDurationPeriodMinutes } from './workModeDuration.js'
 import { getAiSafetySync } from '../aiSafety.js'
 import { resolvePerAccountTarget, resolveTotalTarget } from './targets.js'
 import { accountFingerprint } from './deviceFingerprint.js'
+import { accountProxyUrl } from '../proxies.js'
 
 /**
  * Реестр живых клиентов по задачам: taskId → Set<client>. Нужен, чтобы «Стоп»/«Пауза»
@@ -69,15 +70,15 @@ export async function connectAccount(accountId, taskId, opts = {}) {
   // действует и здесь, и в карточке аккаунта, и в каналах.
   let client
   try {
-    client = await createClient(sessionStr, meta.proxy, accountFingerprint(accountId, meta))
+    client = await createClient(sessionStr, await accountProxyUrl(meta), accountFingerprint(accountId, meta))
   } catch (err) {
     // Прокси подвёл в БОЮ — помечаем нерабочим сразу, а не ждём получасовой авто-проверки:
     // иначе следующая задача снова возьмёт этот прокси и снова встанет на таймаутах.
     const msg = String(err?.message || '')
-    if (meta.proxy && meta.proxy !== '—' && !/AUTH_KEY|SESSION_REVOKED/i.test(msg)) {
+    if (meta.proxyId && !/AUTH_KEY|SESSION_REVOKED/i.test(msg)) {
       try {
-        const { markProxyStatusByUrl } = await import('../proxies.js')
-        await markProxyStatusByUrl(meta.proxy, 'dead')
+        const { markProxyStatus } = await import('../proxies.js')
+        await markProxyStatus(meta.proxyId, 'dead')
       } catch { /* non-fatal */ }
       try { await setAccountMeta(accountId, { proxyWorking: false, proxyCheckAt: Date.now() }) } catch { /* non-fatal */ }
     }

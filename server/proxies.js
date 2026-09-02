@@ -164,42 +164,37 @@ export async function listProxiesWithSecrets() {
 }
 
 /*
- * Короткий кэш каталога с секретами.
+ * КЭША КАТАЛОГА ЗДЕСЬ БОЛЬШЕ НЕТ — и это осознанно.
  *
- * Строку подключения теперь собирают из прокси в момент коннекта, а список аккаунтов
- * читается на каждый чих — без кэша это был бы лишний запрос и расшифровка сотни паролей
- * на каждое чтение меты. Живёт секунды и сбрасывается любой правкой каталога, поэтому
- * «поменял прокси — а он старый» здесь невозможно.
- */
-let _catalog = null
-let _catalogPublic = null
-const CATALOG_TTL = 10_000
-
-export async function proxyCatalog() {
-  if (_catalog && Date.now() - _catalog.ts < CATALOG_TTL) return _catalog.list
-  const list = await listProxiesWithSecrets()
-  _catalog = { list, ts: Date.now() }
-  return list
-}
-
-/**
- * То же, но БЕЗ паролей — для читателей, которым нужны только адрес и статус.
+ * Он существовал ради одной привычки: строка подключения подклеивалась ко ВСЕЙ мете на
+ * каждом её чтении, то есть каталог читался и расшифровывался постоянно, и без копии в
+ * памяти это выходило невыносимо дорого. Копия лечила симптом.
  *
- * Отдельный кэш, а не фильтр по общему: список без паролей нужен там, где секретам делать
- * нечего вовсе (`findProxyByUrl`, витрина). Отдавать им записи с паролями «раз уж всё
- * равно прочитали» — ровно тот способ, которым пароль однажды и уезжает наружу.
+ * Причина убрана: строка подключения собирается по ссылке `proxyId` в момент коннекта —
+ * это одна строка по первичному ключу. Кэшировать нечего, а копия ответа базы в памяти
+ * процесса — это ещё один источник правды, который однажды разойдётся с базой.
  */
-export async function proxyCatalogPublic() {
-  if (_catalogPublic && Date.now() - _catalogPublic.ts < CATALOG_TTL) return _catalogPublic.list
-  const list = await listProxies()
-  _catalogPublic = { list, ts: Date.now() }
-  return list
-}
 
-export function invalidateProxyCatalog() { _catalog = null; _catalogPublic = null }
-
+/** Одна запись каталога по идентификатору — БЕЗ пароля. Для показа и проверок статуса. */
 export async function getProxy(id) {
-  return (await listProxies()).find((p) => p.id === id) || null
+  const key = String(id || '').trim()
+  if (!key) return null
+  const db = sbP()
+  if (!db) return (await listProxies()).find((p) => p.id === key) || null
+  const { data, error } = await db.from(TABLE).select('*').eq('id', key).maybeSingle()
+  if (error && !isMissingTable(error)) throw new Error('[' + TABLE + '] прокси не прочитан: ' + error.message)
+  return data ? proxyFromRow(data, false) : null
+}
+
+/** Одна запись каталога по идентификатору — С паролем. Только для сборки строки коннекта. */
+export async function getProxyWithSecret(id) {
+  const key = String(id || '').trim()
+  if (!key) return null
+  const db = sbP()
+  if (!db) return (await listProxiesWithSecrets()).find((p) => p.id === key) || null
+  const { data, error } = await db.from(TABLE).select('*').eq('id', key).maybeSingle()
+  if (error && !isMissingTable(error)) throw new Error('[' + TABLE + '] прокси не прочитан: ' + error.message)
+  return data ? proxyFromRow(data, true) : null
 }
 
 /**
@@ -211,17 +206,38 @@ export async function getProxy(id) {
  * @param {string|null|undefined} proxyId @returns {Promise<string>} пустая строка — без прокси
  */
 export async function proxyUrlById(proxyId) {
-  const id = String(proxyId || '').trim()
-  if (!id) return ''
-  const all = await listProxiesWithSecrets()
-  const p = all.find((x) => x.id === id)
+  const p = await getProxyWithSecret(proxyId)
   return p ? toProxyUrl(p) : ''
+}
+
+/**
+ * Строка подключения ДЛЯ АККАУНТА — по ссылке в его мете.
+ *
+ * Единственный способ её получить. Раньше она лежала в `meta.proxy`, подклеенная к мете
+ * при чтении, и любой читатель меты платил за весь каталог. Теперь её просят явно — и
+ * там, где действительно подключаются.
+ *
+ * @param {{proxyId?: string|null}|null|undefined} meta
+ * @returns {Promise<string>} пустая строка — прямое подключение
+ */
+export async function accountProxyUrl(meta) {
+  if (!meta?.proxyId) return '' // прокси не назначен — прямое подключение, так и задумано
+  const url = await proxyUrlById(meta.proxyId)
+  /*
+   * Ссылка есть, а записи нет — молчать нельзя.
+   *
+   * Пустая строка здесь означала бы «иди напрямую», то есть аккаунт вышел бы в Telegram
+   * с адреса сервера. Со стороны это выглядит как обычная работа, а на деле — тот самый
+   * способ потерять аккаунт, ради предотвращения которого прокси и заводят. Лучше явная
+   * ошибка в логе задачи.
+   */
+  if (!url) throw new Error('Прокси ' + meta.proxyId + ' назначен аккаунту, но в каталоге его нет')
+  return url
 }
 
 /** Сохранить каталог целиком — только для файлового режима (тесты, локальный запуск). */
 async function writeProxiesFile(all) {
   await writeJson(PROXIES_FILE, all)
-  invalidateProxyCatalog()
 }
 
 /**
@@ -271,7 +287,6 @@ export async function importProxies(entries = []) {
     // `ignoreDuplicates` вместо обновления: перенос НЕ должен трогать то, что уже в базе.
     // Уникальный индекс по точке входа при этом остаётся последним словом.
     const { error } = await db.from(TABLE).upsert(добавить.map(proxyToRow), { onConflict: 'id', ignoreDuplicates: true })
-    invalidateProxyCatalog()
     if (error) throw new Error(`[${TABLE}] перенос каталога не удался: ${error.message}`)
     итог.added = добавить.length
     return итог
@@ -299,7 +314,6 @@ export async function createProxy(input) {
   const db = sbP()
   if (db) {
     const { error } = await db.from(TABLE).insert(proxyToRow(proxy))
-    invalidateProxyCatalog()
     if (error) {
       // MR-169: точку входа определяют адрес, порт и логин — за этим следит уникальный
       // индекс. Раньше проверка жила только в коде и делалась ДО вставки: между проверкой
@@ -334,7 +348,6 @@ export async function updateProxy(id, patch = {}) {
   const db = sbP()
   if (db) {
     const { error } = await db.from(TABLE).update(proxyToRow(next)).eq('id', id)
-    invalidateProxyCatalog()
     if (error) throw new Error(`[${TABLE}] прокси не обновлён: ${error.message}`)
     return { ...next, password: undefined, hasPassword: !!next.password }
   }
@@ -349,7 +362,6 @@ export async function deleteProxy(id) {
     // Аккаунты, у которых он был назначен, освобождаются внешним ключом
     // (accounts_meta.proxy_id ... on delete set null) — отдельного прохода не нужно.
     const { data, error } = await db.from(TABLE).delete().eq('id', id).select('id')
-    invalidateProxyCatalog()
     if (error) throw new Error(`[${TABLE}] прокси не удалён: ${error.message}`)
     return (data || []).length > 0
   }
@@ -373,7 +385,6 @@ export async function deleteProxies(ids) {
   const db = sbP()
   if (db) {
     const { data, error } = await db.from(TABLE).delete().in('id', list).select('id')
-    invalidateProxyCatalog()
     if (error) throw new Error(`[${TABLE}] прокси не удалены: ${error.message}`)
     return (data || []).length
   }
@@ -693,10 +704,11 @@ export async function findProxyByUrl(url) {
   let login = ''
   try { login = decodeURIComponent(new URL(raw).username || '') } catch { /* строка не URL */ }
   /*
-   * Каталог из кэша: эту функцию зовёт `cachedProxyVerdict` — по разу на КАЖДЫЙ аккаунт
-   * в списке. Без кэша сотня аккаунтов означала сотню чтений таблицы прокси подряд.
+   * Поиск по строке остался только для переноса старых записей и ручного ввода: свои
+   * прокси аккаунт держит ссылкой, и по ней берётся одна строка (`getProxy`). В цикле по
+   * аккаунтам эта функция больше не зовётся, поэтому чтение каталога здесь допустимо.
    */
-  const all = await proxyCatalogPublic()
+  const all = await listProxies()
   const same = all.filter((p) => String(p.host) === host && String(p.port) === String(port))
   if (login) return same.find((p) => String(p.username || '') === login) || null
   return same[0] || null

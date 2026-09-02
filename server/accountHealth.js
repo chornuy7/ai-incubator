@@ -27,6 +27,7 @@ import { loadSessionString, createClient } from './tgAuth.js'
 import { accountFingerprint } from './lib/deviceFingerprint.js'
 import { getAccountLock } from './lib/accountLocks.js'
 import { getCronSync } from './cronSettings.js'
+import { accountProxyUrl } from './proxies.js'
 
 /** Как часто перепроверять один аккаунт. */
 export const HEALTH_EVERY_MS = 12 * 60 * 60 * 1000
@@ -102,7 +103,7 @@ export async function accountHealthTick(opts = {}) {
         out.broken += 1
         continue
       }
-      client = await createClient(session, meta.proxy, accountFingerprint(id, meta))
+      client = await createClient(session, await accountProxyUrl(meta), accountFingerprint(id, meta))
       await client.getMe()
       // Жив: помечаем время проверки, статус не трогаем — он мог быть осмысленным
       // (пауза, прогрев, карантин), и «жив» это не повод его сбрасывать.

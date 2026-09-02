@@ -123,7 +123,7 @@ export function AccountPicker({
       if (selected.has(a.id)) return false
       if (role !== 'Все роли' && a.role !== role) return false
       if (!matchesGeo(a.country, country)) return false
-      if (workingProxies && a.proxy === '—') return false
+      if (workingProxies && !a.proxyId) return false
       // §6.3 (AM-002): id включён в поиск, чтобы «нерабочий» аккаунт находился по ID даже когда он скрыт.
       const q = query.trim().toLowerCase()
       if (q && !`${a.name} ${a.username} ${a.phone} ${a.id}`.toLowerCase().includes(q)) return false
@@ -166,7 +166,7 @@ export function AccountPicker({
       if (role !== 'Все роли' && a.role !== role) return false
       if (!matchesGeo(a.country, country)) return false
       if (query && !`${a.name} ${a.username} ${a.phone}`.toLowerCase().includes(query.toLowerCase())) return false
-      return a.proxy === '—'
+      return !a.proxyId
     }).length
   }, [accounts, selected, role, country, query, workingProxies])
 

@@ -384,7 +384,6 @@ export function ProfileTab({ account, stats }: { account: TgAccount; stats: Acco
         <Field label="Гео" value={p?.geo ? `${flagOf(p.geo)} ${nameOf(p.geo)}` : dash} />
         <Field label="Сессия сохранена" value={p?.saved ? 'Да' : 'Нет'} />
         <Field label="Роль" value={stats?.role ?? account.role ?? dash} />
-        <Field label="Проект" value={account.project ?? dash} />
       </SectionCard>
       {/* MR-129: «Даты» больше не отдельный таб — переехали в Профиль (там им и место). */}
       <SectionCard title="Даты" icon={<Calendar size={15} className="text-iris-300" />}>
@@ -399,7 +398,7 @@ export function ProfileTab({ account, stats }: { account: TgAccount; stats: Acco
 
 export function ProxyTab({ account, stats, loading, onRecheck }: { account: TgAccount; stats: AccountStats | null; loading: boolean; onRecheck: () => void }) {
   const px = stats?.proxy
-  const hasPx = !!(account.proxy && account.proxy !== '—') // MR-129: нет прокси → «Добавить», есть → «Сменить»
+  const hasPx = !!account.proxyId // MR-129: нет прокси → «Добавить», есть → «Сменить»
   const setAccountProxy = useApp((s) => s.setAccountProxy)
   const pushToast = useApp((s) => s.pushToast)
   const [changeOpen, setChangeOpen] = useState(false)
@@ -407,12 +406,13 @@ export function ProxyTab({ account, stats, loading, onRecheck }: { account: TgAc
   const [proxyName, setProxyName] = useState<string | null>(null)
   useEffect(() => {
     if (!hasPx) { setProxyName(null); return }
-    const hp = (/^[a-z0-9]+:\/\/(?:[^@]*@)?([^/]+)/i.exec(account.proxy || '') || [])[1] || ''
+    // По ССЫЛКЕ, а не разбором строки подключения: раньше отсюда выковыривали host:port
+    // регуляркой из `socks5://логин:пароль@хост:порт` — то есть строка с паролем жила в
+    // браузере. Теперь у аккаунта есть только proxyId, и запись ищется по нему.
     void fetchProxies().then((list) => {
-      const found = list.find((p) => `${p.host}:${p.port}` === hp)
-      setProxyName(found?.label || null)
+      setProxyName(list.find((p) => p.id === account.proxyId)?.label || null)
     }).catch(() => setProxyName(null))
-  }, [account.proxy, hasPx])
+  }, [account.proxyId, hasPx])
   return (
     <>
     <SectionCard

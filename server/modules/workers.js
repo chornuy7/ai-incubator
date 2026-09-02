@@ -156,6 +156,7 @@ async function goalExpired(settings) {
 }
 import { filterBlacklisted, isBlacklistedSync, isBlacklistedMailingTarget } from '../targetBlacklist.js'
 import { pickReactionPost, normalizeLastPostsCount } from '../lib/reactionPick.js'
+import { accountProxyUrl } from '../proxies.js'
 
 /** @type {Map<string, Promise<void>>} */
 const running = new Map()
@@ -2412,7 +2413,7 @@ export async function runGgr(task, store) {
       try {
         const sessionStr = await loadSessionString(accountId)
         if (!sessionStr) throw new Error('NO_SESSION')
-        client = await createClient(sessionStr, meta.proxy, accountFingerprint(accountId, meta))
+        client = await createClient(sessionStr, await accountProxyUrl(meta), accountFingerprint(accountId, meta))
         const me = await client.getMe()
         let score = 50
         if (me.username) score += 15

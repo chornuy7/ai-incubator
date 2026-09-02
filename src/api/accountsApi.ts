@@ -8,9 +8,113 @@ export type ServerAccount = TgAccount
 // включённой авторизации (есть SESSION_SECRET) сервер отвечал 401 «Требуется вход» —
 // менеджер аккаунтов не загружался. Баланс/настройки работали, т.к. уже шли через клиент.
 
+/** Карточка аккаунта, как её отдаёт сервер. Всё время — ISO-строками. */
+export interface ApiAccount {
+  id: string
+  ownerId: string | null
+  createdAt: string | null
+  updatedAt: string | null
+  inTrash: boolean
+  role: string
+  note: string
+  kind: { service: boolean; platform: boolean }
+  profile: { name: string; username: string; phone: string; telegramUserId: string | null; country: string; avatarColor: string }
+  status: { value: string; code: string | null; params: Record<string, unknown>; since: string | null; until: string | null; previous: string | null }
+  security: { twoFactor: boolean }
+  session: { present: boolean; checkedAt: string | null; ok: boolean | null; healthCheckedAt: string | null }
+  proxy: null | { id: string; label: string; scheme: string | null; host: string | null; port: number | null; country: string | null; status: string; checkedAt: string | null; ok: boolean }
+  trust: null | { score: number; band: string | null }
+  risk?: TgAccount['risk']
+  busy: null | { taskId: string; modules: { key: string; label: string }[] }
+  origin: { code: string | null; params: Record<string, unknown> }
+}
+
+export interface AccountsPage {
+  items: ServerAccount[]
+  page: { number: number; size: number; total: number; pages: number }
+  counts: Record<string, number>
+}
+
+export interface AccountsQuery {
+  page?: number
+  pageSize?: number
+  search?: string
+  statuses?: string[]
+  inTrash?: boolean
+  sort?: { field: string; dir: 'asc' | 'desc' }
+}
+
+/** Ответ сервера → внутренняя модель панели. Единственное место перевода. */
+export function toTgAccount(a: ApiAccount): ServerAccount {
+  return {
+    id: a.id,
+    avatarColor: a.profile.avatarColor,
+    name: a.profile.name,
+    phone: a.profile.phone || '—',
+    username: a.profile.username,
+    role: a.role,
+    country: a.profile.country,
+    status: a.status.value as TgAccount['status'],
+    // Момент времени, а не «11 ч». Формулировку строит интерфейс — там, где её и видно.
+    lastSeenAt: a.updatedAt ?? a.createdAt,
+    proxyId: a.proxy?.id ?? null,
+    // Подпись для таблицы. Строки подключения с логином и паролем в браузере больше нет.
+    proxyLabel: a.proxy ? (a.proxy.label || [a.proxy.host, a.proxy.port].filter(Boolean).join(':')) : '',
+    proxyOk: a.proxy ? a.proxy.ok : true,
+    noProxy: !a.proxy,
+    risk: a.risk,
+    trustScore: a.trust?.score,
+    trustBand: a.trust?.band as TgAccount['trustBand'],
+    createdAt: a.createdAt ? Date.parse(a.createdAt) : 0,
+    inTrash: a.inTrash,
+    note: a.note,
+    originCode: a.origin.code,
+    service: a.kind.service,
+    platform: a.kind.platform,
+    statusUntil: a.status.until ? Date.parse(a.status.until) : null,
+    statusCode: a.status.code,
+    statusParams: a.status.params,
+    lastCheckedAt: a.session.checkedAt ? Date.parse(a.session.checkedAt) : null,
+    lastCheckOk: a.session.ok,
+    has2fa: a.security.twoFactor,
+    hasSession: a.session.present,
+    busyIn: a.busy
+      ? { moduleKey: a.busy.modules[0]?.key ?? '', taskId: a.busy.taskId, moduleLabel: a.busy.modules[0]?.label ?? '', modules: a.busy.modules.map((m) => ({ moduleKey: m.key, moduleLabel: m.label })) }
+      : undefined,
+  }
+}
+
+/**
+ * Страница списка аккаунтов.
+ *
+ * POST, а не GET: у запроса фильтры, поиск, сортировка и постраничность — это тело, а не
+ * строка адреса. Заодно поисковый запрос оператора (а это вполне может быть номер
+ * телефона) перестаёт оседать в истории браузера и в логах прокси.
+ */
+export async function fetchAccountsPage(query: AccountsQuery = {}): Promise<AccountsPage> {
+  const data = await apiPost<{ items: ApiAccount[]; page: AccountsPage['page']; counts: Record<string, number> }>(
+    '/api/tg/accounts/list', query as unknown as Record<string, unknown>,
+  )
+  return { items: (data.items ?? []).map(toTgAccount), page: data.page, counts: data.counts ?? {} }
+}
+
+/**
+ * Весь парк — страницами под капотом.
+ *
+ * Оставлено для экранов, которым правда нужен полный список (выбор аккаунтов в модуле,
+ * лиды). Раньше это была одна ручка «отдай всё», и она же тянула панель: двадцать секунд
+ * на запрос. Теперь «всё» — это осознанный обход страниц, и видно, кто его заказывает.
+ */
 export async function fetchAccounts(): Promise<ServerAccount[]> {
-  const data = await apiGet<{ accounts: ServerAccount[] }>('/api/tg/accounts')
-  return data.accounts
+  const out: ServerAccount[] = []
+  let page = 1
+  for (;;) {
+    const p = await fetchAccountsPage({ page, pageSize: 200 })
+    out.push(...p.items)
+    if (page >= p.page.pages || !p.items.length) break
+    page += 1
+  }
+  return out
 }
 
 export type AccountBusyMap = Record<string, { moduleKey: string; taskId: string; moduleLabel: string; taskStatus?: string }>
@@ -22,7 +126,7 @@ export async function fetchAccountBusy(): Promise<AccountBusyMap> {
 
 export async function patchAccount(
   accountId: string,
-  patch: Partial<Pick<TgAccount, 'role' | 'project' | 'country' | 'status' | 'inTrash' | 'note'>>
+  patch: Partial<Pick<TgAccount, 'role' | 'country' | 'status' | 'inTrash' | 'note'>>
     & { initiator?: string; service?: boolean; proxyId?: string | null },
 ) {
   return apiPatch<{ ok: boolean }>(`/api/tg/accounts/${accountId}`, patch)

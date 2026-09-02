@@ -26,6 +26,7 @@ import { applyBanPolicy } from '../lib/accountRunner.js'
 import { getAiSafetySync } from '../aiSafety.js'
 import { filterBlacklisted } from '../targetBlacklist.js'
 import { accountFingerprint } from '../lib/deviceFingerprint.js'
+import { accountProxyUrl } from '../proxies.js'
 
 /** @type {Map<string, Promise<void>>} */
 const running = new Map()
@@ -168,7 +169,7 @@ async function runTask(task) {
       try {
         assertAccountAvailable(accountId, task.id)
         await setAccountMeta(accountId, { status: 'working' })
-        client = await createClient(sessionStr, meta.proxy, accountFingerprint(accountId, meta))
+        client = await createClient(sessionStr, await accountProxyUrl(meta), accountFingerprint(accountId, meta))
 
         const channelRaw = channels[Math.floor(Math.random() * channels.length)]
         const joinDelay = pickDelay(s.delays?.join?.[0] ?? 84, s.delays?.join?.[1] ?? 156, mul)

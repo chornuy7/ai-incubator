@@ -10,6 +10,7 @@ import { sleep } from './lib/protection.js'
 import { accountFingerprint } from './lib/deviceFingerprint.js'
 import { foldersForRequest, isAdminRequest, ownedForRequest, ownerScopeForRequest, ownsRecord, canSeeAccount } from './lib/accessGuard.js'
 import { appendAudit } from './lib/auditLog.js'
+import { accountProxyUrl } from './proxies.js'
 
 export const featureRouter = Router()
 
@@ -257,7 +258,7 @@ featureRouter.post('/target-folders/:id/validate', async (req, res) => {
     const sessionStr = await loadSessionString(accountId)
     if (!sessionStr) return res.status(400).json({ ok: false, error: 'Сессия аккаунта недоступна' })
 
-    const client = await createClient(sessionStr, meta.proxy, accountFingerprint(accountId, meta))
+    const client = await createClient(sessionStr, await accountProxyUrl(meta), accountFingerprint(accountId, meta))
     const valid = []
     try {
       for (const t of targets) {

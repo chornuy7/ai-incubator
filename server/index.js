@@ -5,7 +5,7 @@ import path from 'path'
 import { fileURLToPath } from 'url'
 import { PORT } from './config.js'
 import { tgSendCode, tgVerifyCode, tgVerify2fa, tgCheckSession } from './tgAuth.js'
-import { tgListAccounts, tgPatchAccount, tgDeleteAccount, tgEmptyTrash } from './tgAccounts.js'
+import { tgPatchAccount, tgDeleteAccount, tgEmptyTrash } from './tgAccounts.js'
 import { neuroCommentingRouter } from './neuroCommenting/routes.js'
 import { neuroDialogsRouter } from './neuroDialogs/routes.js'
 import { modulesRouter } from './modules/routes.js'
@@ -109,7 +109,7 @@ app.get('/api/health', (_req, res) => {
  * `/api/tg/accounts/<слово>` без владельца — это не аккаунт, а коллекция (busy,
  * daily-all, empty-trash): они разбираются со своими правами сами, ниже.
  */
-const ACCOUNT_COLLECTIONS = new Set(['busy', 'daily-all', 'empty-trash'])
+const ACCOUNT_COLLECTIONS = new Set(['busy', 'daily-all', 'empty-trash', 'list'])
 const guardAccountParam = async (req, res, next) => {
   const id = String(req.params.accountId || '')
   if (ACCOUNT_COLLECTIONS.has(id)) return next()
@@ -123,6 +123,21 @@ app.use('/api/tg/accounts/:accountId', guardAccountParam)
 app.use('/api/tg/session/:accountId', guardAccountParam)
 
 /**
+ * Область видимости аккаунтов — считается один раз и запоминается на запросе.
+ *
+ * Здесь стоял перебор с `canSeeAccount` на каждый аккаунт, а внутри неё — чтение
+ * пользователя, владельца подписки, ВСЕЙ таблицы меты, ролей и групп. Шестьдесят три
+ * аккаунта превращались в триста с лишним обращений, хотя ответ у всех один: права
+ * спрашивающего за время одного HTTP-запроса не меняются.
+ */
+function scopeOf(req) {
+  if (!req.__accountScope) {
+    req.__accountScope = import('./lib/accountAccess.js').then((m) => m.accountScope(req))
+  }
+  return req.__accountScope
+}
+
+/**
  * Оставить в карте `accountId → данные` только свои аккаунты.
  *
  * Сводки по всем аккаунтам (`/busy`, `/daily-all`, активность) отдавали карту целиком —
@@ -130,41 +145,81 @@ app.use('/api/tg/session/:accountId', guardAccountParam)
  * остального: имея id, можно было дёргать роуты по аккаунту.
  */
 async function mineOnly(req, map) {
-  const { canSeeAccount } = await import('./lib/accessGuard.js')
-  const out = {}
-  for (const [id, v] of Object.entries(map || {})) if (await canSeeAccount(req, id)) out[id] = v
-  return out
+  const { filterAccountMap } = await import('./lib/accountAccess.js')
+  return filterAccountMap(await scopeOf(req), map)
 }
 
 /** Отсеять из списка id чужие аккаунты — для массовых операций по выбору оператора. */
 async function mineIds(req, ids = []) {
-  const { canSeeAccount } = await import('./lib/accessGuard.js')
-  const out = []
-  for (const id of ids) if (await canSeeAccount(req, id)) out.push(id)
-  return out
+  const { filterAccountIds } = await import('./lib/accountAccess.js')
+  return filterAccountIds(await scopeOf(req), ids)
 }
 
-app.get('/api/tg/accounts', async (req, res) => {
+/**
+ * Список аккаунтов — СТРАНИЦАМИ.
+ *
+ * Раньше здесь отдавался весь парк целиком, а страницу резал уже браузер. При
+ * шестидесяти трёх аккаунтах ответ собирался двадцать секунд, и с ростом парка это
+ * росло линейно: показать пятьдесят строк стоило ровно столько же, сколько показать всё.
+ *
+ * Метод POST, а не GET с полусотней query-параметров: у запроса есть фильтры, поиск,
+ * сортировка и постраничность, и всё это — тело, а не строка адреса. Заодно из адресной
+ * строки, логов прокси и истории браузера уходит поисковый запрос оператора: он вполне
+ * может быть номером телефона.
+ *
+ * Область видимости считается один раз (`scopeOf`) и уезжает В ЗАПРОС к базе, а не
+ * применяется к уже полученному массиву. Это не оптимизация: фильтровать после выборки
+ * страницы значит показать сотруднику страницу, где половина строк вычеркнута, и
+ * счётчик «всего», посчитанный по чужим аккаунтам.
+ *
+ * Проверка живости (обход Telegram по каждому аккаунту) здесь больше не живёт: она
+ * минуты, а список — миллисекунды, и смешивать их в одной ручке нельзя.
+ */
+async function отдатьСписок(req, res, параметры) {
   try {
-    // ?verify=1 — сходить в Telegram за каждым аккаунтом. Долго (подключение на аккаунт),
-    // поэтому только по явному запросу: обычный список отдаётся из meta мгновенно.
-    // Аккаунты — имущество ПРОСТРАНСТВА. Сотрудник видит аккаунты своего владельца
-    // (дальше их ещё режет роль), посторонний — только свои. Админ и дев без сессии —
-    // все: у первого это работа, у второго нет пространства вовсе.
-    const me = req.header('x-user-id')
-    let ownerId = null
-    if (me && !(await isAdminRequest(req))) {
-      const { resolveSubscriptionOwner } = await import('./users.js')
-      ownerId = await resolveSubscriptionOwner(me)
+    const { listAccountsPage } = await import('./accountsList.js')
+    const scope = await scopeOf(req)
+    if (scope.kind === 'none') {
+      const size = Number(параметры.pageSize) || 50
+      return res.json({ ok: true, items: [], page: { number: 1, size, total: 0, pages: 1 }, counts: {} })
     }
-    const accounts = await tgListAccounts({
-      verify: req.query.verify === '1' || req.query.verify === 'true',
-      ...(ownerId ? { ownerId } : {}),
+    const страница = await listAccountsPage({
+      ...параметры,
+      ownerId: scope.kind === 'all' ? null : scope.ownerId,
+      ids: scope.kind === 'scoped' ? [...scope.ids] : null,
     })
-    res.json({ ok: true, accounts })
+    res.json({ ok: true, ...страница })
   } catch (err) {
     res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' })
   }
+}
+
+app.post('/api/tg/accounts/list', async (req, res) => {
+  const b = req.body ?? {}
+  await отдатьСписок(req, res, {
+    page: b.page,
+    pageSize: b.pageSize,
+    search: b.search,
+    statuses: Array.isArray(b.statuses) ? b.statuses : undefined,
+    inTrash: b.inTrash === true,
+    sort: b.sort,
+  })
+})
+
+/**
+ * GET оставлен для внешних потребителей протокола (MCP, интеграции): им проще ссылкой.
+ * Отдаёт ровно то же самое и так же страницами — «отдай всё» больше нет ни у кого.
+ */
+app.get('/api/tg/accounts', async (req, res) => {
+  const q = req.query || {}
+  await отдатьСписок(req, res, {
+    page: q.page,
+    pageSize: q.pageSize,
+    search: q.search,
+    statuses: typeof q.status === 'string' && q.status ? String(q.status).split(',') : undefined,
+    inTrash: q.inTrash === '1' || q.inTrash === 'true',
+    sort: q.sortBy ? { field: String(q.sortBy), dir: String(q.sortDir || 'desc') } : undefined,
+  })
 })
 
 app.patch('/api/tg/accounts/:accountId', async (req, res) => {

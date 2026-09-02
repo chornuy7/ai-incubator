@@ -18,7 +18,8 @@ import path from 'node:path'
 process.env.PROXIES_FILE = path.join(os.tmpdir(), `mr262-proxies-${process.pid}.json`)
 
 const { createProxy, updateProxy, deleteProxy, importProxies, listProxies, toProxyUrl } = await import('../proxies.js')
-const { withProxyStrings, proxyPatch, findByUrl } = await import('../lib/proxyLink.js')
+const { accountProxyUrl } = await import('../proxies.js')
+const { proxyPatch, findByUrl } = await import('../lib/proxyLink.js')
 
 test.after(() => { try { fs.unlinkSync(process.env.PROXIES_FILE) } catch { /* нечего убирать */ } })
 
@@ -58,34 +59,28 @@ test('смена пароля в каталоге доходит до аккау
    * руками.
    */
   const p = await createProxy({ host: '10.0.0.2', port: 1080, username: 'u', password: 'старый' })
-  const мета = { acc_1: { proxyId: p.id, proxy: toProxyUrl(p) } }
-
   await updateProxy(p.id, { password: 'новый' })
-  const после = await withProxyStrings(мета)
-  assert.equal(после.acc_1.proxy, 'socks5://u:%D0%BD%D0%BE%D0%B2%D1%8B%D0%B9@10.0.0.2:1080',
-    'строка пересобрана из каталога, а не взята из аккаунта')
-  // Исходный объект не тронут: пересборка — это чтение, а не запись.
-  assert.equal(мета.acc_1.proxy, 'socks5://u:%D1%81%D1%82%D0%B0%D1%80%D1%8B%D0%B9@10.0.0.2:1080')
+  assert.equal(await accountProxyUrl({ proxyId: p.id }),
+    'socks5://u:%D0%BD%D0%BE%D0%B2%D1%8B%D0%B9@10.0.0.2:1080',
+    'строка собрана из каталога в момент запроса, а не взята из копии в аккаунте')
 })
 
-test('прокси удалили — строку не стираем, но помечаем', async () => {
+test('прокси назначен, но исчез из каталога — явная ошибка, а не выход напрямую', async () => {
   /*
-   * Молчаливый обрыв связи посреди задачи хуже, чем работа на прежнем прокси: аккаунт
-   * продолжает работать, а «прокси исчез» — это разговор с человеком.
+   * Раньше на этот случай в аккаунте держали прежнюю строку. Держать её больше негде — и
+   * не надо: пустая строка означала бы «подключайся напрямую», то есть аккаунт вышел бы в
+   * Telegram с адреса сервера. Со стороны это обычная работа, а на деле — способ потерять
+   * аккаунт, ради предотвращения которого прокси и заводят.
    */
   const p = await createProxy({ host: '10.0.0.3', port: 1080 })
-  const url = toProxyUrl(p)
   await deleteProxy(p.id)
-
-  const после = await withProxyStrings({ acc_2: { proxyId: p.id, proxy: url } })
-  assert.equal(после.acc_2.proxy, url, 'строка осталась')
-  assert.equal(после.acc_2.proxyGone, true, 'но видно, что каталог о нём больше не знает')
+  await assert.rejects(() => accountProxyUrl({ proxyId: p.id }), /в каталоге его нет/)
 })
 
-test('аккаунты без ссылки не трогаем — и каталог ради них не читаем', async () => {
-  // Старые записи (строка без ключа) работают как работали: переход постепенный.
-  const мета = { acc_3: { proxy: 'socks5://old:pass@1.2.3.4:1080' } }
-  assert.deepEqual(await withProxyStrings(мета), мета)
+test('прокси не назначен — прямое подключение, и в каталог не ходим', async () => {
+  // Отсутствие ссылки — это осознанное «без прокси», а не поломка.
+  assert.equal(await accountProxyUrl({}), '')
+  assert.equal(await accountProxyUrl(null), '')
 })
 
 test('строка находится в каталоге целиком, а не по host+port', async () => {
@@ -132,8 +127,14 @@ test('в строке таблицы аккаунта есть ссылка на
   const мета = fs.readFileSync(new URL('../accountsMeta.js', import.meta.url), 'utf8')
   // MR-290: соответствие «поле меты → колонка» объявлено картой, а не расписано руками.
   assert.match(мета, /\['proxyId',\s+'proxy_id',\s+'text'\]/, 'ключ должен доезжать до колонки')
-  // Пересборка строки — на чтении; писать её обратно значило бы снова размножить копии.
-  assert.match(мета, /return withProxyStrings\(await loadAllMetaRaw\(\)\)/)
+  /*
+   * И чтение меты НЕ подклеивает строку подключения.
+   *
+   * Обёртка withProxyStrings стояла прямо в loadAllMeta: каждое чтение меты — а их в коде
+   * под сорок — дочитывало весь каталог прокси и расшифровывало все пароли. Строка нужна
+   * там, где подключаются, и берётся там же: accountProxyUrl(meta).
+   */
+  assert.ok(!/withProxyStrings\s*\(/.test(мета), 'строку подключения к мете больше не подклеивают')
 })
 
 test('каталог переносится из файла с СОХРАНЕНИЕМ id', async () => {
