@@ -270,7 +270,10 @@ export async function createTicket({ userId = '', author = null, subject = '', c
   }
   const ticket = {
     id: genId(now, taken),
-    userId: userId || '—',
+    // Автор неизвестен — это NULL, а не прочерк строкой. У tickets.user_id внешний ключ
+    // на профиль (MR-290): строки «—» в справочнике нет, и обращение просто не создалось
+    // бы. Тот же промах ронял витрину денег — см. payments.buildRows.
+    userId: userId || null,
     // MR-257: адресат. Сотрудник пишет владельцу, клиент платформы — поддержке.
     toOwnerId: String(toOwnerId || '') || null,
     subject: subj,

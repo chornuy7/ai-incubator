@@ -543,6 +543,15 @@ export function createTaskStore(moduleKey, idPrefix, deps = {}) {
     saveTask,
     loadTask,
     listTasks,
+    /*
+     * Разложить строки представления, прочитанные КЕМ-ТО ДРУГИМ.
+     *
+     * Админские сводки обходят пятнадцать модулей и звали `listTasks` у каждого — то есть
+     * пятнадцать запросов к одному и тому же представлению на каждую страницу отчёта, и
+     * так в девяти местах. Одного запроса достаточно: в `task_list` есть `module_key`.
+     * Разбор строки при этом остаётся здесь — он знает про цели, ошибки и причины пауз.
+     */
+    mapListRows: (rows = []) => rows.map(listRow),
     appendLog,
     appendHistory,
     createTask,

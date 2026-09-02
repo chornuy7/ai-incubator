@@ -408,6 +408,60 @@ const COIN_PRECISION = 1000
 const normCoins = (v) => Math.max(0, Math.round((Number(v) || 0) * COIN_PRECISION) / COIN_PRECISION)
 
 /** @returns {Promise<{planId:string, plan:{name:string,accountLimit:number}, coins:number, updatedAt:number}>} */
+/**
+ * Состав подписки для многих пользователей разом.
+ *
+ * @param {string[]} userIds
+ * @returns {Promise<Map<string, string[]|'all'>>} id пользователя → модули
+ */
+export async function modulesForUsers(userIds = []) {
+  const ids = [...new Set(userIds.map((x) => String(x || '')).filter(Boolean))]
+  const out = new Map()
+  if (!ids.length) return out
+  const db = sb()
+  if (!db) {
+    // Файловый режим: данных мало, честный поштучный обход дешевле лишнего кода.
+    for (const id of ids) out.set(id, (await getBalance(id)).modules)
+    return out
+  }
+
+  // 1. Карта профилей — ОДИН раз на всю операцию.
+  const { data: profiles } = await db.from('profiles').select('id, legacy_id, parent_id')
+  const строки = (profiles || []).filter((p) => p.legacy_id)
+  const legacyByUuid = new Map(строки.map((p) => [p.id, p.legacy_id]))
+  const родитель = new Map(строки.map((p) => [p.legacy_id, p.parent_id ? (legacyByUuid.get(p.parent_id) || null) : null]))
+  const владелец = (id) => {
+    let cur = id
+    const seen = new Set()
+    while (родитель.get(cur) && !seen.has(cur)) { seen.add(cur); cur = родитель.get(cur) }
+    return cur
+  }
+  const ключи = new Map(ids.map((id) => [id, key(владелец(id))]))
+  const владельцы = [...new Set([...ключи.values(), 'workspace'])]
+
+  // 2. Строки состава и признак «все модули» — по одному запросу на всех владельцев.
+  const [rowsRes, subRes] = await Promise.all([
+    db.from('user_subscriptions').select('user_id, module_key, expires_at').in('user_id', владельцы),
+    db.from('subscriptions').select('id, all_modules').in('id', владельцы),
+  ])
+  const поВладельцу = new Map()
+  for (const r of rowsRes.data || []) {
+    if (!поВладельцу.has(r.user_id)) поВладельцу.set(r.user_id, [])
+    поВладельцу.get(r.user_id).push(r)
+  }
+  const всеМодули = new Map((subRes.data || []).map((r) => [r.id, r.all_modules === true]))
+
+  for (const [id, k] of ключи) {
+    const rows = поВладельцу.get(k) || []
+    const all = всеМодули.get(k) === true
+    // Та же развилка, что в getBalance: своей подписки нет — общий набор пространства
+    // достаётся только дев-режиму, остальным пусто.
+    if (!all && !rows.length) { out.set(id, k === DEFAULT_USER ? (rowsToModules(поВладельцу.get('workspace') || [], всеМодули.get('workspace') === true).modules ?? DEFAULT_MODULES) : []); continue }
+    out.set(id, rowsToModules(rows, all).modules)
+  }
+  return out
+}
+
 export async function getBalance(userId) {
   const db = sb()
   if (db) {

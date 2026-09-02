@@ -9,9 +9,9 @@
  * Постатейно, а не в мелочах — прямая формулировка заказчика: клиенту нужны строки
  * «модуль → сделано действий → израсходовано», а не лог каждого комментария.
  */
-import { listModuleKeys, getModuleStore } from './modules/registry.js'
+import { listModuleKeys, tasksByModule } from './modules/registry.js'
 import { tokenSummary, readLedger } from './tokenLedger.js'
-import { getBalance, totalCoins, coinsByUser, usdByUser } from './balance.js'
+import { getBalance, modulesForUsers, totalCoins, coinsByUser, usdByUser } from './balance.js'
 import { moduleTitle } from './lib/moduleTitles.js'
 import { loadAllMeta } from './accountsMeta.js'
 import { listActivity } from './accountActivity.js'
@@ -139,11 +139,7 @@ export async function adminOverview(opts = {}) {
 
   // ── задачи по модулям ──────────────────────────────────────────────────
   const tasks = { total: 0, byStatus: {}, byModule: {} }
-  for (const key of listModuleKeys()) {
-    const store = getModuleStore(key)
-    if (!store) continue
-    let list = []
-    try { list = await store.listTasks() } catch { continue }
+  for (const [key, list] of await tasksByModule()) {
     for (const t of list) {
       if (Number(t.createdAt) && t.createdAt < since) continue
       tasks.total += 1
@@ -287,11 +283,7 @@ export async function economyReport(opts = {}) {
  */
 export async function activeNow() {
   const running = []
-  for (const key of listModuleKeys()) {
-    const store = getModuleStore(key)
-    if (!store) continue
-    let list = []
-    try { list = await store.listTasks() } catch { continue }
+  for (const [key, list] of await tasksByModule()) {
     for (const t of list) {
       if (t.status !== 'running' && t.status !== 'paused') continue
       const done = Number(t.progress?.done) || 0
@@ -357,11 +349,7 @@ export async function dailySpend(opts = {}) {
     row.tokenCoins = round3(row.tokenCoins + (Number(e.coins) || 0))
   }
 
-  for (const key of listModuleKeys()) {
-    const store = getModuleStore(key)
-    if (!store) continue
-    let list = []
-    try { list = await store.listTasks() } catch { continue }
+  for (const [key, list] of await tasksByModule()) {
     for (const t of list) {
       const ts = Number(t.createdAt) || 0
       if (!ts || !inRange(ts)) continue
@@ -405,11 +393,7 @@ export async function accountReport(accountId, opts = {}) {
   let errors = 0
   let lastUsed = 0
   const recent = []
-  for (const key of listModuleKeys()) {
-    const store = getModuleStore(key)
-    if (!store) continue
-    let list = []
-    try { list = await store.listTasks() } catch { continue }
+  for (const [key, list] of await tasksByModule()) {
     for (const t of list) {
       const ids = t.settings?.accountIds || []
       if (!Array.isArray(ids) || !ids.includes(id)) continue
@@ -482,11 +466,7 @@ export async function problems(opts = {}) {
   // проход, чтобы оператору не прыгать между вкладками «Отчёт» и «Проблемы».
   const taskStatus = {} // status -> сколько задач
   const modAgg = {}     // moduleKey -> { key, title, tasks, done, running, errorTasks, errors }
-  for (const key of listModuleKeys()) {
-    const store = getModuleStore(key)
-    if (!store) continue
-    let list = []
-    try { list = await store.listTasks() } catch { continue }
+  for (const [key, list] of await tasksByModule()) {
     for (const t of list) {
       if ((Number(t.createdAt) || 0) < since) continue
       const st = String(t.status || 'unknown')
@@ -653,10 +633,16 @@ export async function usersReport(opts = {}) {
 
   // Подписка каждого: какие модули ему открыты. 'all' — набор не выбран (открыто всё).
   // Нужно админу, чтобы прямо в списке видеть, кто на что подписан.
-  const modsByUser = {}
-  await Promise.all(users.map(async (u) => {
-    try { modsByUser[u.id] = (await getBalance(u.id)).modules } catch { modsByUser[u.id] = 'all' }
-  }))
+  /*
+   * Одним запросом на всех, а не полным балансом на каждого.
+   *
+   * Здесь стоял `getBalance` в цикле по восьмидесяти шести клиентам. Каждый вызов — семь
+   * обращений к базе (владелец кошелька, владелец подписки, монеты, две подписки, две
+   * выборки состава), то есть около шестисот запросов на одну страницу отчёта. Даже
+   * пущенные «параллельно», они упираются в предел одновременных соединений: ручка
+   * отвечала 23 секунды. Отчёту нужен ровно один показатель — состав подписки.
+   */
+  const modsByUser = Object.fromEntries(await modulesForUsers(users.map((u) => u.id)).catch(() => new Map()))
   const subOf = (mods) => {
     if (mods === 'all' || mods == null) return { all: true, count: 0, titles: [], keys: [] }
     const arr = Array.isArray(mods) ? mods : []
@@ -675,11 +661,7 @@ export async function usersReport(opts = {}) {
     if (!row.byModule[key]) row.byModule[key] = { tasks: 0, actions: 0, tokens: 0, spent: 0 }
     return row.byModule[key]
   }
-  for (const key of listModuleKeys()) {
-    const store = getModuleStore(key)
-    if (!store) continue
-    let list = []
-    try { list = await store.listTasks() } catch { continue }
+  for (const [key, list] of await tasksByModule()) {
     for (const t of list) {
       if ((Number(t.createdAt) || 0) < since) continue
       // Задачи, заведённые до того, как стали запоминать владельца, считаем ничьими:
@@ -828,11 +810,7 @@ export async function myStats(userId, opts = {}) {
     return byModule[key]
   }
 
-  for (const key of listModuleKeys()) {
-    const store = getModuleStore(key)
-    if (!store) continue
-    let list = []
-    try { list = await store.listTasks() } catch { continue }
+  for (const [key, list] of await tasksByModule()) {
     for (const t of list) {
       if (t.userId !== uid) continue // только свои задачи
       if ((Number(t.createdAt) || 0) < since) continue
@@ -1030,11 +1008,7 @@ export async function clientReport(opts = {}) {
 
   const rows = []
   const moduleKeys = new Set(listModuleKeys())
-  for (const key of listModuleKeys()) {
-    const store = getModuleStore(key)
-    if (!store) continue
-    let list = []
-    try { list = await store.listTasks() } catch { continue }
+  for (const [key, list] of await tasksByModule()) {
     const inPeriod = list.filter((t) => {
       const ts = Number(t.createdAt) || 0
       if (userId && t.userId !== userId) return false
@@ -1173,11 +1147,7 @@ export async function userDialogs({ userId, limit = 200 } = {}) {
 
   // 1. Аккаунты, которыми этот юзер работал (из его задач по всем модулям).
   const accountIds = new Set()
-  for (const key of listModuleKeys()) {
-    const store = getModuleStore(key)
-    if (!store) continue
-    let list = []
-    try { list = await store.listTasks() } catch { continue }
+  for (const [key, list] of await tasksByModule()) {
     for (const t of list) {
       if (t.userId !== userId) continue
       for (const a of t.settings?.accountIds || []) accountIds.add(a)

@@ -40,6 +40,43 @@ export const MODULE_DEFS = {
   'spam-unblock': { idPrefix: 'sub', requiresTargets: false },
 }
 
+/**
+ * Задачи ВСЕХ модулей — одним запросом. Для админских сводок.
+ *
+ * @returns {Promise<Map<string, object[]>>} ключ модуля → его задачи
+ */
+export async function tasksByModule() {
+  const out = new Map()
+  const ключи = listModuleKeys().filter((k) => getModuleStore(k))
+  for (const k of ключи) out.set(k, [])
+
+  const { getSupabase, supabaseEnabled, isMissingTable } = await import('../lib/supabase.js')
+  const db = supabaseEnabled() ? getSupabase() : null
+  if (!db) {
+    // Файловый режим: у каждого модуля свой каталог, обойти их можно только по одному.
+    for (const k of ключи) {
+      try { out.set(k, await getModuleStore(k).listTasks()) } catch { /* модуль без задач */ }
+    }
+    return out
+  }
+
+  const { data, error } = await db.from('task_list').select('*').order('created_at', { ascending: false })
+  if (error) {
+    if (!isMissingTable(error)) throw new Error('[task_list] список задач не прочитан: ' + error.message)
+    return out // миграция не доехала — пусто лучше, чем падение страницы
+  }
+  const поМодулю = new Map()
+  for (const r of data || []) {
+    if (!поМодулю.has(r.module_key)) поМодулю.set(r.module_key, [])
+    поМодулю.get(r.module_key).push(r)
+  }
+  for (const k of ключи) {
+    const store = getModuleStore(k)
+    out.set(k, store.mapListRows ? store.mapListRows(поМодулю.get(k) || []) : [])
+  }
+  return out
+}
+
 export function getModuleStore(moduleKey) {
   if (!MODULE_DEFS[moduleKey]) return null
   if (!stores[moduleKey]) stores[moduleKey] = createTaskStore(moduleKey, MODULE_DEFS[moduleKey].idPrefix)

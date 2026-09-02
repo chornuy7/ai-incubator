@@ -65,11 +65,42 @@ let _syncing = null
  * Пересобрать индекс из источников истины. Идемпотентно: id детерминированный, повтор
  * лишь перезаписывает ту же строку (INSERT OR REPLACE). Дёшево на текущем объёме.
  */
+/** Отметка «источники были вот такими на прошлой сборке»: строк и время последней. */
+let _собрано = ''
+
+/**
+ * Изменились ли источники с прошлой сборки.
+ * @returns {Promise<{нужно: boolean, отметка: string}>}
+ */
+async function проверитьИсточники() {
+  const base = sb()
+  if (!base) return { нужно: true, отметка: '' } // файловый режим: дёшево и без запросов
+  try {
+    const [журнал, подписки] = await Promise.all([
+      base.from('wallet_log').select('ts', { count: 'exact', head: false }).order('ts', { ascending: false }).limit(1),
+      base.from('user_subscriptions').select('updated_at', { count: 'exact', head: false }).order('updated_at', { ascending: false }).limit(1),
+    ])
+    if (журнал.error || подписки.error) return { нужно: true, отметка: '' }
+    const отметка = [
+      журнал.count, журнал.data?.[0]?.ts ?? '',
+      подписки.count, подписки.data?.[0]?.updated_at ?? '',
+    ].join('|')
+    return { нужно: отметка !== _собрано, отметка }
+  } catch {
+    return { нужно: true, отметка: '' } // не смогли проверить — собираем, как раньше
+  }
+}
+
 export async function syncPayments() {
   if (_syncing) return _syncing
-  _syncing = doSync().finally(() => { _syncing = null })
+  const { нужно, отметка } = await проверитьИсточники()
+  if (!нужно) return
+  _syncing = doSync().then(() => { _собрано = отметка }).finally(() => { _syncing = null })
   return _syncing
 }
+
+/** Пересобрать витрину принудительно — для тестов и ручного «обновить». */
+export function invalidatePaymentsCache() { _собрано = '' }
 
 async function doSync() {
   // Строки витрины собираем ОДИН раз, общим кодом: правила «что считать доходом» не
@@ -130,7 +161,7 @@ async function buildRows() {
     const amount = Number(r.amount) || 0
     if (amount <= 0) continue // только пополнения/начисления, не списания
     const ts = Number(r.ts) || 0
-    const uid = r.userId || '—'
+    const uid = r.userId || null
     if (r.currency === 'usd') {
       /*
        * Пополнение ДЕНЬГАМИ ($) — но не всякое зачисление доллара есть выручка.
@@ -145,7 +176,7 @@ async function buildRows() {
        * задним числом объявлять прошлые пополнения подарками мы не вправе.
        */
       const выдано = r.kind === 'grant'
-      out.push({ id: `u:${ts}:${uid}:${amount}`, ts, user_id: uid, kind: выдано ? 'usd_grant' : 'usd', coins: null, amount_fiat: round3(amount), currency: '$', modules: null, status: 'paid', reason: String(r.reason || '') })
+      out.push({ id: `u:${ts}:${uid ?? 'anon'}:${amount}`, ts, user_id: uid, kind: выдано ? 'usd_grant' : 'usd', coins: null, amount_fiat: round3(amount), currency: '$', modules: null, status: 'paid', reason: String(r.reason || '') })
       continue
     }
     /*
@@ -161,7 +192,7 @@ async function buildRows() {
      * разбираем по тексту причины: покупка токенов пишется как «Куплено за $…».
      */
     const bought = r.kind ? r.kind === 'purchase' : /^Куплено за \$/.test(String(r.reason || ''))
-    out.push({ id: `w:${ts}:${uid}:${amount}`, ts, user_id: uid, kind: bought ? 'coins' : 'grant', coins: round3(amount), amount_fiat: null, currency: '⚡', modules: null, status: 'paid', reason: String(r.reason || '') })
+    out.push({ id: `w:${ts}:${uid ?? 'anon'}:${amount}`, ts, user_id: uid, kind: bought ? 'coins' : 'grant', coins: round3(amount), amount_fiat: null, currency: '⚡', modules: null, status: 'paid', reason: String(r.reason || '') })
   }
   // Покупки планов ($): события подписки с ценой (набор «все»/пустой — не покупка).
   const audit = await readAudit({ action: 'subscription.set', limit: 100000 }).catch(() => [])
@@ -176,7 +207,7 @@ async function buildRows() {
     // отвечал «ON CONFLICT DO UPDATE command cannot affect row a second time» (21000).
     // Падала пересборка витрины целиком, а вместе с ней и вся админ-статистика.
     const ts = Date.parse(e.ts) || Number(e.ts) || 0
-    const uid = e.initiator && e.initiator !== 'system' ? e.initiator : '—'
+    const uid = e.initiator && e.initiator !== 'system' ? e.initiator : null
     const mods = e.meta?.modules
     // Ключ — собственный id события аудита: две оплаты одного человека остаются двумя
     // строками, даже если случились в одну миллисекунду. Время в ключ не годится:

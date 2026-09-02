@@ -308,26 +308,11 @@ export async function listSubs(ownerId, all) {
 export async function resolveWalletOwner(userId) {
   const id = String(userId || '')
   if (!id || id === '__default') return id
-  let byId = new Map()
   const db = sb()
-  if (db) {
-    const { data } = await db.from('profiles').select('id, legacy_id, parent_id, balance_mode')
-    const rows = (data || []).filter((p) => p.legacy_id)
-    const legacyByUuid = new Map(rows.map((p) => [p.id, p.legacy_id]))
-    byId = new Map(rows.map((p) => [p.legacy_id, { id: p.legacy_id, parentId: p.parent_id ? (legacyByUuid.get(p.parent_id) || null) : null, balanceMode: p.balance_mode || 'shared' }]))
-  } else {
-    const users = await readJson(USERS_FILE(), [])
-    byId = new Map((Array.isArray(users) ? users : []).map((u) => [u.id, { id: u.id, parentId: u.parentId || null, balanceMode: u.balanceMode || 'shared' }]))
-  }
-  let cur = byId.get(id)
-  const seen = new Set()
-  while (cur && cur.parentId && cur.balanceMode !== 'individual' && !seen.has(cur.id)) {
-    seen.add(cur.id)
-    const parent = byId.get(cur.parentId)
-    if (!parent) break
-    cur = parent
-  }
-  return cur ? cur.id : id
+  // Свой кошелёк — значит выше не поднимаемся: `individual` и есть владелец кошелька.
+  return db
+    ? подняться(db, id, (p) => (p.balance_mode || 'shared') === 'individual')
+    : поднятьсяПоФайлу(id, (u) => (u.balanceMode || 'shared') === 'individual')
 }
 
 /**
@@ -342,29 +327,56 @@ export async function resolveWalletOwner(userId) {
  * модуля, субу открывался нейрокомментинг из чужого набора).
  * @param {string} userId @returns {Promise<string>} id владельца подписки (или сам userId)
  */
-export async function resolveSubscriptionOwner(userId) {
-  const id = String(userId || '')
-  if (!id || id === '__default') return id
-  let byId = new Map()
-  const db = sb()
-  if (db) {
-    const { data } = await db.from('profiles').select('id, legacy_id, parent_id')
-    const rows = (data || []).filter((p) => p.legacy_id)
-    const legacyByUuid = new Map(rows.map((p) => [p.id, p.legacy_id]))
-    byId = new Map(rows.map((p) => [p.legacy_id, { id: p.legacy_id, parentId: p.parent_id ? (legacyByUuid.get(p.parent_id) || null) : null }]))
-  } else {
-    const users = await readJson(USERS_FILE(), [])
-    byId = new Map((Array.isArray(users) ? users : []).map((u) => [u.id, { id: u.id, parentId: u.parentId || null }]))
+const ПОЛЯ_ПРОФИЛЯ = 'id, legacy_id, parent_id, balance_mode'
+
+/**
+ * Подъём по цепочке «сотрудник → владелец» ТОЧЕЧНЫМИ запросами.
+ *
+ * Здесь читалась вся таблица профилей — ради одной строки и её родителей. На горячем
+ * пути (getBalance, гейты доступа) это давало полное чтение таблицы на каждый вызов.
+ *
+ * @param {object} db клиент
+ * @param {string} legacyId с кого начинаем
+ * @param {(p: object) => boolean} стоп остановиться на этом профиле, не поднимаясь выше
+ * @returns {Promise<string>}
+ */
+async function подняться(db, legacyId, стоп) {
+  const первый = await db.from('profiles').select(ПОЛЯ_ПРОФИЛЯ).eq('legacy_id', legacyId).maybeSingle()
+  let cur = первый.data
+  if (!cur) return legacyId
+  const пройдено = new Set()
+  // Потолок на случай кольца в данных: без него цикл «родитель сам себе предок» вешает
+  // запрос намертво. Реальная глубина — один-два шага.
+  for (let шаг = 0; шаг < 32; шаг += 1) {
+    if (!cur.parent_id || стоп(cur) || пройдено.has(cur.legacy_id)) break
+    пройдено.add(cur.legacy_id)
+    const { data: родитель } = await db.from('profiles').select(ПОЛЯ_ПРОФИЛЯ).eq('id', cur.parent_id).maybeSingle()
+    if (!родитель?.legacy_id) break
+    cur = родитель
   }
+  return cur.legacy_id || legacyId
+}
+
+/** То же по файловому хранилищу — там таблица одна и лежит в памяти целиком. */
+async function поднятьсяПоФайлу(id, стоп) {
+  const users = await readJson(USERS_FILE(), [])
+  const byId = new Map((Array.isArray(users) ? users : []).map((u) => [u.id, u]))
   let cur = byId.get(id)
   const seen = new Set()
-  while (cur && cur.parentId && !seen.has(cur.id)) {
+  while (cur && cur.parentId && !стоп(cur) && !seen.has(cur.id)) {
     seen.add(cur.id)
     const parent = byId.get(cur.parentId)
     if (!parent) break
     cur = parent
   }
   return cur ? cur.id : id
+}
+
+export async function resolveSubscriptionOwner(userId) {
+  const id = String(userId || '')
+  if (!id || id === '__default') return id
+  const db = sb()
+  return db ? подняться(db, id, () => false) : поднятьсяПоФайлу(id, () => false)
 }
 
 /** §4.2 (MR-30): нормализовать режим баланса. */
