@@ -297,19 +297,23 @@ export function AccountsPage() {
   useEffect(() => {
     void fetchProxies().then((list) => {
       const m: Record<string, string> = {}
-      for (const p of list) if (p.label) m[`${p.host}:${p.port}`] = p.label
+      // Ключ — ИДЕНТИФИКАТОР записи каталога. Раньше ключом был `host:port`, потому что
+      // у аккаунта лежала строка подключения и совпадение искали по адресу. Теперь у
+      // аккаунта ссылка, и связь прямая.
+      for (const p of list) m[p.id] = p.label || `${p.host}:${p.port}`
       setProxyNames(m)
     }).catch(() => {})
   }, [])
-  // Имя прокси по его URL (матчим по host:port — пароль/логин в строке могут отличаться форматом).
   /*
    * Подпись прокси — по ССЫЛКЕ.
    *
    * Здесь регуляркой выковыривали host:port из строки `socks5://логин:пароль@хост:порт`,
    * то есть строка с паролем лежала в состоянии страницы. Теперь у аккаунта только
-   * идентификатор, а подпись приходит с сервера готовой.
+   * идентификатор; каталог ещё не приехал — берём подпись, присланную сервером вместе
+   * со строкой списка, чтобы колонка не стояла пустой в первые полсекунды.
    */
-  const proxyName = (proxyId: string): string => proxyNames[proxyId] || '—'
+  const proxyNameOf = (a: TgAccount): string =>
+    (a.proxyId ? proxyNames[a.proxyId] : '') || a.proxyLabel || '—'
   const [roleFilter, setRoleFilter] = useState('Все роли')
   // §1: «роль как группа» уходит — аккаунт работает ПОД КАМПАНИЕЙ. Закрепление живёт
   // в самой кампании (см. server/campaigns.js), поэтому accountsMeta.role не трогаем.
@@ -925,7 +929,7 @@ export function AccountsPage() {
           <AccountsTable
             campaignOf={campaignOf}
             onAssign={setAssignAcc}
-            proxyName={proxyName}
+            proxyName={proxyNameOf}
             pageItems={pageItems}
             visibleCols={visibleCols}
             showCol={showCol}
@@ -1198,7 +1202,7 @@ function AccountsTable(props: {
   /** §1: под какой кампанией аккаунт и закреплён ли (замочек). */
   campaignOf: (accountId: string) => { name: string; locked: boolean } | null
   onAssign: (a: TgAccount) => void
-  proxyName?: (url: string) => string
+  proxyName?: (a: TgAccount) => string
 }) {
   const { pageItems, showCol, selected, toggleOne, allOnPageSelected, toggleAll, campaignOf } = props
   const showAccountCol = showCol('name') || showCol('avatar')
@@ -1456,9 +1460,10 @@ function AccountsTable(props: {
                   </td>
                 )}
                 {showCol('lastSeen') && (
-                  <Tip text={fullTimeText(a.lastSeenAt)}>
-                    <td className="px-4 py-3 text-muted">{lastSeenText(a.lastSeenAt)}</td>
-                  </Tip>
+                  <td className="px-4 py-3 text-muted">
+                    {/* Точная дата — в подсказке: «8 ч» удобно читать, но иногда нужно знать когда именно. */}
+                    <Tip text={fullTimeText(a.lastSeenAt)}>{lastSeenText(a.lastSeenAt)}</Tip>
+                  </td>
                 )}
                 {showCol('proxy') && (
                   // MR-129: прокси задаётся прямо из списка — клик по ячейке открывает «Сменить прокси».
@@ -1486,7 +1491,7 @@ function AccountsTable(props: {
                             <AlertTriangle size={11} className="shrink-0" /> прокси не отвечает · сменить
                           </span>
                         ) : (
-                          <span className="text-muted group-hover/px:text-spark-300">{props.proxyName ? props.proxyName(a.proxyId || '') : (a.proxyLabel || '—')}</span>
+                          <span className="text-muted group-hover/px:text-spark-300">{props.proxyName ? props.proxyName(a) : (a.proxyLabel || '—')}</span>
                         )}
                         <Server size={11} className="shrink-0 opacity-0 transition-opacity group-hover/px:opacity-100" />
                       </button>
