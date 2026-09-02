@@ -127,13 +127,23 @@ export interface BrokenGroup { reason: string; link: string; total: number; item
  */
 export async function fetchAccountsSummary(): Promise<{ counts: Record<string, number>; facets: AccountsFacets }> {
   const d = await apiGet<{ counts?: Record<string, number>; facets?: AccountsFacets }>('/api/tg/accounts/summary')
-  return { counts: d.counts ?? {}, facets: { ...ПУСТЫЕ_ГРАНИ, ...(d.facets || {}) } }
+  return {
+    counts: d.counts && typeof d.counts === 'object' ? d.counts : {},
+    // Грани сливаем с пустыми: недостающая ветка ответа не должна ронять шапку.
+    facets: { ...ПУСТЫЕ_ГРАНИ, ...(d.facets || {}), risk: { ...ПУСТЫЕ_ГРАНИ.risk, ...(d.facets?.risk || {}) } },
+  }
 }
 
 /** Кто «не в строю» — запрашивается по клику, а не постоянно. */
 export async function fetchBrokenAccounts(limit = 8): Promise<BrokenGroup[]> {
   const d = await apiGet<{ groups?: BrokenGroup[] }>(`/api/tg/accounts/broken?limit=${limit}`)
-  return d.groups ?? []
+  // Приводим к ожидаемой форме здесь, в одном месте: дальше по коду данные считаются целыми.
+  return (Array.isArray(d.groups) ? d.groups : []).map((g) => ({
+    reason: String(g?.reason || ''),
+    link: String(g?.link || ''),
+    total: Number(g?.total) || 0,
+    items: Array.isArray(g?.items) ? g.items : [],
+  }))
 }
 
 const ПУСТЫЕ_ГРАНИ: AccountsFacets = { countries: {}, risk: { deadProxy: 0, noProxy: 0, lowTrust: 0 }, modules: {}, busyTotal: 0 }

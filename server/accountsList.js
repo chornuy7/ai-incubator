@@ -508,6 +508,29 @@ export async function brokenAccounts(ownerId = null, limit = 8) {
 const БЕЗ_РАБОТЫ = new Set(['reauth', 'invalid', 'spamblock', 'quarantine', 'frozen'])
 
 /**
+ * Сколько аккаунтов назначено каждому прокси.
+ *
+ * Считается по тому же представлению, что и список аккаунтов, — иначе каталог прокси и
+ * менеджер разойдутся в числах прямо на экране. Раньше счёт шёл по метаданным с
+ * дополнительным условием «есть файл сессии», и ради этого условия читалась строка
+ * сессии на КАЖДЫЙ аккаунт. Условие заодно и неверное: аккаунт без сессии никуда не
+ * делся, прокси у него занят, и в менеджере он теперь виден.
+ *
+ * @param {string|null} ownerId @returns {Promise<Record<string, number>>}
+ */
+export async function proxyUsage(ownerId = null) {
+  const db = supabaseEnabled() ? getSupabase() : null
+  if (!db) return {}
+  let q = db.from(VIEW).select('proxy_id').eq('in_trash', false).not('proxy_id', 'is', null)
+  if (ownerId) q = q.eq('owner_id', String(ownerId))
+  const { data, error } = await q
+  if (error) throw new Error(`[${VIEW}] занятость прокси не прочитана: ${error.message}`)
+  const out = {}
+  for (const r of data || []) out[r.proxy_id] = (out[r.proxy_id] || 0) + 1
+  return out
+}
+
+/**
  * Один аккаунт по идентификатору — тем же представлением и с той же формой ответа.
  *
  * Отдельная функция, чтобы карточка и список не разошлись: раньше список считал

@@ -1,8 +1,7 @@
 /** CRUD-роуты сущности «Прокси» (§3.2/3.4). Монтируется в /api/proxies. */
 import { Router } from 'express'
-import { listProxies, getProxy, createProxy, updateProxy, deleteProxy, deleteProxies, checkAllProxies, sharedProxies, probeProxy, geoNote, tcpPing, proxyUsageMap, toProxyUrl } from './proxies.js'
+import { listProxies, getProxy, createProxy, updateProxy, deleteProxy, deleteProxies, checkAllProxies, sharedProxies, probeProxy, geoNote, tcpPing, toProxyUrl } from './proxies.js'
 import { loadAllMeta } from './accountsMeta.js'
-import { sessionPresence } from './tgAuth.js'
 import { parseProxyList, proxyKey, assignLabels } from './lib/proxyImport.js'
 import { appendAudit } from './lib/auditLog.js'
 
@@ -19,24 +18,24 @@ proxiesRouter.get('/', async (req, res) => {
   try {
     // Дубли разрешены: к каждому прокси добавляем счётчик `usedBy` — на скольких
     // аккаунтах он висит (раньше это считалось нарушением, теперь — норма §6-обновл.).
-    const { ownedForRequest } = await import('./lib/accessGuard.js')
-    const [allProxies, meta] = await Promise.all([listProxies(), loadAllMeta()])
-    const proxies = await ownedForRequest(req, allProxies, (p) => p?.ownerId)
     /*
-     * usedBy считаем только по РЕАЛЬНЫМ аккаунтам: с сессией и не в корзине. Иначе
-     * «сиротские» meta (импорт без сессии, демо-сиды) раздували «занят N» — прокси
-     * числился занятым аккаунтами, которых нет в менеджере.
+     * «Занят N аккаунтами» считает база — по тому же представлению, что и менеджер.
      *
-     * Наличие сессии выясняется ОДНИМ запросом на весь список. Здесь стоял
-     * `loadSessionString` в цикле по аккаунтам — то есть шестьдесят три обращения к базе
-     * (и столько же расшифровок) ради одного бита на аккаунт. Страница «Прокси»
-     * открывалась две с половиной секунды именно из-за этого.
+     * Здесь читалась строка сессии ПО КАЖДОМУ аккаунту: шестьдесят три обращения к базе
+     * ради одного бита («есть ли сессия»), из-за чего страница открывалась две с
+     * половиной секунды. Само условие вдобавок было неверным — аккаунт без живой сессии
+     * никуда не делся, прокси у него занят, и в менеджере он теперь виден.
      */
-    const живые = Object.entries(meta).filter(([, m]) => !m?.inTrash)
-    const сСессией = await sessionPresence(живые.map(([id]) => id)).catch(() => new Set())
-    const realMeta = Object.fromEntries(живые.filter(([id]) => сСессией.has(id)))
-    const usage = proxyUsageMap(realMeta)
-    res.json({ ok: true, proxies: proxies.map((p) => ({ ...p, usedBy: usage[p.id]?.length || 0 })) })
+    const { ownedForRequest } = await import('./lib/accessGuard.js')
+    const { proxyUsage } = await import('./accountsList.js')
+    const { accountScope } = await import('./lib/accountAccess.js')
+    const scope = await accountScope(req)
+    const [allProxies, usage] = await Promise.all([
+      listProxies(),
+      proxyUsage(scope.kind === 'all' ? null : scope.ownerId).catch(() => ({})),
+    ])
+    const proxies = await ownedForRequest(req, allProxies, (p) => p?.ownerId)
+    res.json({ ok: true, proxies: proxies.map((p) => ({ ...p, usedBy: usage[p.id] || 0 })) })
   } catch (err) { fail(res, err, 500) }
 })
 

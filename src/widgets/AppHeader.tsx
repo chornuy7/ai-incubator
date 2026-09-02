@@ -115,7 +115,7 @@ export function AppHeader() {
   }, [])
 
   const broken = useMemo(
-    () => разбор.flatMap((g) => g.items.map((x) => ({ ...x, причина: g.reason }))),
+    () => (Array.isArray(разбор) ? разбор : []).flatMap((g) => (g?.items || []).map((x) => ({ ...x, причина: g.reason }))),
     [разбор],
   )
   /*
@@ -450,9 +450,9 @@ export function AppHeader() {
    * разделе), потом статус. Считает сервер — иначе пришлось бы держать весь парк.
    */
   const неВСтрою = useMemo(
-    () => разбор.map((g) => [
+    () => (Array.isArray(разбор) ? разбор : []).map((g) => [
       STATUS_META[g.reason as keyof typeof STATUS_META]?.label || g.reason,
-      { ссылка: g.link, имена: g.items.map((x) => x.name), всего: g.total },
+      { ссылка: g.link, имена: (g?.items || []).map((x) => x.name), всего: g.total ?? 0 },
     ] as const),
     [разбор],
   )
