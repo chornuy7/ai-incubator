@@ -172,6 +172,7 @@ export async function listProxiesWithSecrets() {
  * «поменял прокси — а он старый» здесь невозможно.
  */
 let _catalog = null
+let _catalogPublic = null
 const CATALOG_TTL = 10_000
 
 export async function proxyCatalog() {
@@ -181,7 +182,21 @@ export async function proxyCatalog() {
   return list
 }
 
-export function invalidateProxyCatalog() { _catalog = null }
+/**
+ * То же, но БЕЗ паролей — для читателей, которым нужны только адрес и статус.
+ *
+ * Отдельный кэш, а не фильтр по общему: список без паролей нужен там, где секретам делать
+ * нечего вовсе (`findProxyByUrl`, витрина). Отдавать им записи с паролями «раз уж всё
+ * равно прочитали» — ровно тот способ, которым пароль однажды и уезжает наружу.
+ */
+export async function proxyCatalogPublic() {
+  if (_catalogPublic && Date.now() - _catalogPublic.ts < CATALOG_TTL) return _catalogPublic.list
+  const list = await listProxies()
+  _catalogPublic = { list, ts: Date.now() }
+  return list
+}
+
+export function invalidateProxyCatalog() { _catalog = null; _catalogPublic = null }
 
 export async function getProxy(id) {
   return (await listProxies()).find((p) => p.id === id) || null
@@ -677,7 +692,11 @@ export async function findProxyByUrl(url) {
   // несколько учёток, и поиск только по адресу возвращал бы первую попавшуюся.
   let login = ''
   try { login = decodeURIComponent(new URL(raw).username || '') } catch { /* строка не URL */ }
-  const all = await listProxies()
+  /*
+   * Каталог из кэша: эту функцию зовёт `cachedProxyVerdict` — по разу на КАЖДЫЙ аккаунт
+   * в списке. Без кэша сотня аккаунтов означала сотню чтений таблицы прокси подряд.
+   */
+  const all = await proxyCatalogPublic()
   const same = all.filter((p) => String(p.host) === host && String(p.port) === String(port))
   if (login) return same.find((p) => String(p.username || '') === login) || null
   return same[0] || null

@@ -105,6 +105,48 @@ export async function listSessionIds() {
   return [...ids]
 }
 
+/**
+ * У кого из перечисленных аккаунтов сессия есть — ОДНИМ запросом на весь список.
+ *
+ * Списку аккаунтов сама строка сессии не нужна: он только отсеивает тех, у кого её нет.
+ * Раньше ради этого звался `loadSessionString` по аккаунту — то есть на парк из сотни
+ * это сто обращений к базе подряд плюс сто расшифровок, и всё ради одного бита на строку.
+ *
+ * Расшифровки здесь нет вовсе и быть не должно: наружу идёт только «есть/нет».
+ *
+ * @param {string[]} ids @returns {Promise<Set<string>>}
+ */
+export async function sessionPresence(ids = []) {
+  const нужные = [...new Set((ids || []).map(String).filter(Boolean))]
+  const есть = new Set()
+  if (!нужные.length) return есть
+
+  const db = sessionsDb()
+  if (db) {
+    // Пачками: длина URL у PostgREST ограничена, а `in` уезжает в query-строку.
+    for (let i = 0; i < нужные.length; i += 200) {
+      const кусок = нужные.slice(i, i + 200)
+      const { data, error } = await db.from(SESSIONS_TABLE).select('account_id, session_enc').in('account_id', кусок)
+      if (error && !isMissingTable(error)) throw new Error(`[${SESSIONS_TABLE}] список сессий не прочитан: ${error.message}`)
+      for (const r of data || []) if (r.session_enc) есть.add(String(r.account_id))
+    }
+  }
+
+  /*
+   * Остальных ищем на диске — перенос сессий в базу ещё не прогоняли, и на боевом сервере
+   * ВСЕ сессии пока файловые. Пустой файл сессией не считается: раньше это отсеивалось
+   * проверкой пустой строки после чтения, и поведение надо сохранить.
+   */
+  for (const id of нужные) {
+    if (есть.has(id)) continue
+    try {
+      const st = await fs.stat(sessionFile(id))
+      if (st.size > 0) есть.add(id)
+    } catch { /* файла нет — сессии нет */ }
+  }
+  return есть
+}
+
 /** Новый id аккаунта. Экспортируется для §2 (массовый импорт). */
 export function newAccountId(phone) {
   const hash = crypto.createHash('sha256').update(phone + Date.now()).digest('hex').slice(0, 12)

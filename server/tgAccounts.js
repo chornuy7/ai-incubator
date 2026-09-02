@@ -1,7 +1,7 @@
 // MR-290: файловая система здесь больше не нужна — сессии переехали в базу, и всё
 // обращение к ним идёт через tgAuth.js.
-import { loadAllMeta, getAccountMeta, setAccountMeta, deleteAccountMeta, countryFromPhone, avatarColor } from './accountsMeta.js'
-import { loadSessionString, createClient, listSessionIds, deleteSession } from './tgAuth.js'
+import { loadAllMeta, metaOf, getAccountMeta, setAccountMeta, deleteAccountMeta, countryFromPhone, avatarColor } from './accountsMeta.js'
+import { loadSessionString, sessionPresence, createClient, listSessionIds, deleteSession } from './tgAuth.js'
 import { getAccountLock } from './lib/accountLocks.js'
 import { getAllTrustCache } from './lib/trustCache.js'
 import { accountFingerprint } from './lib/deviceFingerprint.js'
@@ -136,13 +136,30 @@ export async function tgListAccounts(opts = {}) {
   const only = opts.only ? String(opts.only) : null
   const ids = (await listSessionIds()).filter((id) => !only || id === only)
   const accounts = []
-  const trustAll = await getAllTrustCache()
+  /*
+   * Всё, что одинаково для ВСЕГО парка, читается до цикла и по одному разу.
+   *
+   * Здесь стояли `getAccountMeta` и `loadSessionString` — по вызову на аккаунт. Пока мета
+   * лежала в одном jsonb, а сессии файлами на диске, это стоило дёшево и не бросалось в
+   * глаза. После переезда в базу цена каждого вызова изменилась: `getAccountMeta` читает
+   * ВСЮ таблицу меты, а с MR-262 тянет следом ещё и весь каталог прокси с расшифровкой
+   * паролей; `loadSessionString` — отдельный запрос по аккаунту. На парке из шестидесяти
+   * трёх аккаунтов страница списка отправляла в базу больше двухсот запросов подряд
+   * вместо трёх, и открывалась во столько же раз дольше.
+   *
+   * Правило простое: внутри цикла по аккаунтам не должно остаться ни одного обращения,
+   * которое не зависит от конкретного аккаунта.
+   */
+  const [trustAll, allMeta, сСессией] = await Promise.all([
+    getAllTrustCache(),
+    loadAllMeta(),
+    sessionPresence(ids),
+  ])
 
   for (const accountId of ids) {
-    let meta = await getAccountMeta(accountId)
+    let meta = metaOf(allMeta, accountId)
     if (ownerId && !accountBelongsTo(meta, ownerId)) continue
-    const sessionStr = await loadSessionString(accountId)
-    if (!sessionStr) continue
+    if (!сСессией.has(accountId)) continue
 
     let me = null
     // Без проверки считаем сессию рабочей: файл на месте, а реальный вердикт даст
@@ -150,6 +167,9 @@ export async function tgListAccounts(opts = {}) {
     let sessionOk = true
     if (verify) {
       try {
+        // Строка сессии нужна ТОЛЬКО в этой ветке. Здесь на каждый аккаунт и так идёт
+        // подключение к Telegram, рядом с которым одно чтение ничего не решает.
+        const sessionStr = await loadSessionString(accountId)
         const client = await createClient(sessionStr, meta.proxy, accountFingerprint(accountId, meta))
         me = await client.getMe()
         sessionOk = true

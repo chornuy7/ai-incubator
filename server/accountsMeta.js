@@ -289,9 +289,20 @@ export function accountLabel(meta, accountId) {
   return `#${String(accountId || '').slice(-6)}`
 }
 
+/**
+ * Мета одного аккаунта из УЖЕ прочитанной карты — с теми же умолчаниями.
+ *
+ * Нужна там, где перебирают парк: `getAccountMeta` на каждом шаге цикла читает таблицу
+ * целиком (а с MR-262 — ещё и каталог прокси), поэтому на списке из сотни аккаунтов
+ * получалось сто чтений всей меты вместо одного. Читаем карту один раз — берём из неё.
+ * @param {Record<string, object>} all @param {string} accountId
+ */
+export function metaOf(all, accountId) {
+  return { ...DEFAULT_META, ...(all?.[accountId] || {}) }
+}
+
 export async function getAccountMeta(accountId) {
-  const all = await loadAllMeta()
-  return { ...DEFAULT_META, ...(all[accountId] || {}) }
+  return metaOf(await loadAllMeta(), accountId)
 }
 
 /**

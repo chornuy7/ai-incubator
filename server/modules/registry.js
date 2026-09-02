@@ -203,14 +203,16 @@ export function startModuleTask(moduleKey, settings, opts = {}) {
  */
 async function warnAboutProxyCluster(task, store, accountIds) {
   try {
-    const [{ proxySpreadGate }, { getAccountMeta }] = await Promise.all([
+    const [{ proxySpreadGate }, { loadAllMeta, metaOf }] = await Promise.all([
       import('../lib/antiCluster.js'),
       import('../accountsMeta.js'),
     ])
+    // Карта меты читается ОДИН раз: `getAccountMeta` в цикле означал чтение всей таблицы
+    // меты и каталога прокси на каждый аккаунт запускаемой задачи.
+    const allMeta = await loadAllMeta()
     const byAccount = {}
     for (const id of accountIds) {
-      const meta = await getAccountMeta(id)
-      byAccount[id] = meta?.proxy || ''
+      byAccount[id] = metaOf(allMeta, id)?.proxy || ''
     }
     const gate = proxySpreadGate(byAccount, accountIds)
     if (!gate.ok) await store.appendLog(task, 'warning', `Риск кластера (§4.4): ${gate.reason}`)
