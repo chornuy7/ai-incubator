@@ -13,8 +13,7 @@ import fs from 'fs/promises'
 import multer from 'multer'
 import { scanFolder, listDirs } from './lib/accountScan.js'
 import { distributeProxies, pairByOrder, importOne, existingAccountKeys, isKnownByPhone } from './lib/accountImport.js'
-import { listProxies, toProxyUrl, proxyUsageMap, isUsableProxy } from './proxies.js'
-import { proxyPatch, findByUrl } from './lib/proxyLink.js'
+import { listProxies, toProxyUrl, proxyUsageMap, isUsableProxy, ensureProxyByUrl } from './proxies.js'
 import { loadAllMeta, setAccountMeta, countryFromPhone } from './accountsMeta.js'
 import { appendAudit } from './lib/auditLog.js'
 import { authEnforced } from './lib/session.js'
@@ -131,7 +130,10 @@ importRouter.post('/run', async (req, res) => {
     const chosen = proxyIds.length ? all.filter((p) => proxyIds.includes(p.id)) : all.filter(isUsableProxy)
     const assigned = distributeProxies(items, {
       mode: proxyMode,
-      proxyUrls: chosen.map(toProxyUrl),
+      // Раздаём ИДЕНТИФИКАТОРЫ каталога, а не собранные строки: строку подключения
+      // соберёт importOne из записи прокси, вместе с паролем, которого в каталоге для
+      // интерфейса больше нет.
+      proxyUrls: chosen.map((p) => p.id),
       single: singleProxy,
       // `manual` — раскладка из таблицы «аккаунт ↔ прокси»: оператор её уже видел
       // и поправил, переставлять нельзя.
@@ -261,7 +263,7 @@ importRouter.get('/proxy-capacity', async (_req, res) => {
     const meta = await loadAllMeta()
     const usage = proxyUsageMap(meta)
     const usable = all.filter(isUsableProxy)
-    const unused = usable.filter((p) => !(usage[toProxyUrl(p)]?.length))
+    const unused = usable.filter((p) => !(usage[p.id]?.length))
     // `free` оставляем для обратной совместимости фронта = сколько ещё не занятых.
     res.json({ ok: true, total: all.length, usable: usable.length, free: unused.length, freeIds: unused.map((p) => p.id) })
   } catch (err) { fail(res, err, 500) }
@@ -282,7 +284,7 @@ importRouter.post('/pair-preview', async (req, res) => {
     }
     const all = await listProxies()
     const meta = await loadAllMeta()
-    const usage = proxyUsageMap(meta) // url → [accountId], для счётчика «занят N»
+    const usage = proxyUsageMap(meta) // proxyId → [accountId], для счётчика «занят N»
 
     // Если форма прислала свой список (например, только что добавленные) — берём его
     // в присланном порядке. Иначе — ВЕСЬ пул: дубли разрешены, занятые не прячем,
@@ -324,11 +326,17 @@ importRouter.post('/assign-proxies', async (req, res) => {
     if (!ids.length) return res.status(400).json({ ok: false, error: 'Выберите аккаунты' })
     if (mode === 'single' && !singleProxy) return res.status(400).json({ ok: false, error: 'Выберите прокси' })
 
+    // Владелец нужен, если прокси придётся ЗАВЕСТИ в каталоге (ручной ввод строкой):
+    // каталог — ресурс пространства, и запись без владельца видели бы все.
+    const me = req.header('x-user-id')
+    const { resolveSubscriptionOwner } = await import('./users.js')
+    const ownerId = me ? await resolveSubscriptionOwner(me) : ''
+
     const all = await listProxies()
     const chosen = proxyIds.length ? all.filter((p) => proxyIds.includes(p.id)) : all.filter(isUsableProxy)
     // Дубли разрешены — «занятые» не исключаем: один прокси можно повесить на многих.
     const assigned = distributeProxies(ids.map((id) => ({ id })), {
-      mode, proxyUrls: chosen.map(toProxyUrl), single: singleProxy,
+      mode, proxyUrls: chosen.map((p) => p.id), single: singleProxy,
     })
 
     const rows = []
@@ -339,21 +347,28 @@ importRouter.post('/assign-proxies', async (req, res) => {
         continue
       }
       /*
-       * MR-262: пишем КЛЮЧ каталога, а не только строку.
+       * Прокси у аккаунта — ССЫЛКА на каталог, и только она (MR-262, доработано в MR-290).
        *
-       * Строку оставляем рядом — её читают воркеры и витрина, — но источником истины
-       * становится `proxyId`: смена пароля в каталоге теперь доходит до всех аккаунтов
-       * сама, а не остаётся в сорока копиях.
+       * MR-262 писал ссылку, если запись нашлась в каталоге, а ручной ввод мимо каталога
+       * оставлял строкой на аккаунте. Мы идём дальше и заводим такую строку в каталог:
+       * владелец 01.09 просил именно этого — «с любого места добавление идёт в БД».
+       * Иначе на аккаунте остаётся прокси, которого в списке нет, и его нельзя ни
+       * проверить, ни переназначить, ни увидеть в «кем занят».
+       *
+       * Снятие прокси делаем ЯВНО, как в MR-262: пустая ссылка плюс прочерк в строке.
+       * Раньше здесь уходило `{ proxyId: undefined }`, а это «поле не передали» —
+       * прежняя ссылка осталась бы на месте, и «без прокси» ничего бы не сняло.
        */
-      const запись = mode === 'none' ? null : findByUrl(all, proxy)
-      await setAccountMeta(ids[i], mode === 'none'
-        // «Без прокси» — это прочерк, а не пустая строка: так прямое подключение
-        // отображается в списке и не путается с «прокси ещё не назначали».
-        ? { proxyId: '', proxy: '—' }
-        // Нашли в каталоге — пишем ссылку и ЧИСТИМ строку. Не нашли (ручной ввод мимо
-        // каталога) — оставляем строку: иначе правка молча потеряла бы прокси.
-        : (запись ? { ...proxyPatch(запись), proxy: '' } : { proxyId: '', proxy }))
-      rows.push({ accountId: ids[i], ok: true, proxy: mode === 'none' ? null : proxy })
+      if (mode === 'none') {
+        await setAccountMeta(ids[i], { proxyId: '', proxy: '—' })
+        rows.push({ accountId: ids[i], ok: true, proxyId: null })
+        continue
+      }
+      const proxyId = proxy && proxy.includes('://')
+        ? await ensureProxyByUrl(proxy, ownerId)
+        : (proxy || null)
+      await setAccountMeta(ids[i], { proxyId: proxyId || '' })
+      rows.push({ accountId: ids[i], ok: true, proxyId })
     }
 
     const okCount = rows.filter((r) => r.ok).length

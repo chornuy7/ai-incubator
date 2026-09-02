@@ -5,6 +5,7 @@
 import crypto from 'crypto'
 import { dataPath, readJson, writeJson } from './lib/jsonStore.js'
 import { listStore } from './lib/tableStore.js'
+import { toDbTime, fromDbTime, fromDbTimeOrNull } from './lib/dbTime.js'
 
 const FILE = process.env.CAMPAIGN_SCHEDULES_FILE || dataPath('campaign-schedules.json')
 
@@ -12,16 +13,43 @@ const FILE = process.env.CAMPAIGN_SCHEDULES_FILE || dataPath('campaign-schedules
 const schedStore = listStore({
   table: 'campaign_schedules',
   file: () => FILE,
+  /*
+   * MR-290: «когда запустить» и «что вышло» — колонками, `body` остаётся json.
+   *
+   * Это разные вещи, и разделены они не по вкусу. Время запуска, повтор и включённость
+   * — то, по чему планировщик ВЫБИРАЕТ, что пора запускать: такой отбор обязан идти по
+   * индексу, а не разбором json у каждой строки. А `body` — заявка на будущую кампанию
+   * в том виде, в каком её принимает API кампаний: её форма принадлежит API, а не этой
+   * таблице, и раскладывать её по колонкам значило бы менять схему при каждой правке
+   * параметров кампании.
+   */
   toRow: (x) => { const { id, name, userId, createdAt, updatedAt, ...data } = x; return {
     id, name: name || '', data, user_id: userId || null,
+    run_at: toDbTime(data.runAt),
+    repeat: data.repeat === 'daily' ? 'daily' : 'none',
+    enabled: data.enabled !== false,
+    last_run_at: toDbTime(data.lastRunAt),
+    body: data.body ?? null,
+    last_result: data.lastResult ?? null,
     created_at: new Date(createdAt || Date.now()).toISOString(),
     updated_at: new Date(updatedAt || Date.now()).toISOString(),
   } },
-  fromRow: (r) => ({
-    ...(r.data || {}), id: r.id, name: r.name || '', userId: r.user_id || undefined,
-    createdAt: r.created_at ? new Date(r.created_at).getTime() : 0,
-    updatedAt: r.updated_at ? new Date(r.updated_at).getTime() : 0,
-  }),
+  fromRow: (r) => {
+    const s = {
+      ...(r.data || {}), id: r.id, name: r.name || '', userId: r.user_id || undefined,
+      createdAt: r.created_at ? new Date(r.created_at).getTime() : 0,
+      updatedAt: r.updated_at ? new Date(r.updated_at).getTime() : 0,
+    }
+    if (r.run_at != null) s.runAt = fromDbTime(r.run_at)
+    if (r.repeat) s.repeat = r.repeat
+    if (r.enabled != null) s.enabled = r.enabled !== false
+    // `lastRunAt` и `lastResult` различают «ещё не запускалось» и «запускалось»: NULL
+    // здесь значащий, поэтому в ноль он не сворачивается.
+    if (r.last_run_at !== undefined) s.lastRunAt = fromDbTimeOrNull(r.last_run_at)
+    if (r.body != null) s.body = r.body
+    if (r.last_result !== undefined) s.lastResult = r.last_result ?? null
+    return s
+  },
 })
 const DAY = 24 * 60 * 60 * 1000
 

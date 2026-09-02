@@ -311,7 +311,9 @@ for (const key of picked) {
       failed = true
       break
     }
-    const identity = (r) => key.map((k) => r[k]).join(' ')
+    // Разделитель — escape-последовательность, а не сам байт: настоящий NUL в исходнике
+    // делает файл бинарным для git и grep (найдено проверкой sourceHygiene, MR-290).
+    const identity = (r) => key.map((k) => r[k]).join("\u0000")
     const have = new Set((data || []).map(identity))
     toWrite[table] = (planned[table] || []).filter((r) => !have.has(identity(r)))
     total += toWrite[table].length

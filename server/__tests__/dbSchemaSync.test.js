@@ -69,6 +69,13 @@ const STORES = [
     tables: ['tracked_links', 'link_hits'],
     notColumns: ['tracked_links', 'link_hits', 'schema cache'],
   },
+  {
+    name: 'состав групп аккаунтов',
+    sql: ['2026-07-30-remaining-stores.sql', '2026-07-30-owner-stores.sql', '2026-09-01-mr290-group-members.sql'],
+    code: 'accountGroups.js',
+    tables: ['account_groups', 'account_group_members'],
+    notColumns: ['account_group_members', 'account_groups', 'schema cache'],
+  },
 ]
 
 /**
@@ -82,6 +89,16 @@ const readSql = async (f) => {
   return куски.join('\n')
 }
 const readCode = (f) => fs.readFile(new URL(`../${f}`, import.meta.url), 'utf8')
+
+/**
+ * Схлопнуть пробелы и переводы строк — чтобы сверять по тексту, а не регуляркой.
+ *
+ * Проверки здесь ищут куски SQL и кода со скобками. В регулярке их пришлось бы
+ * экранировать, и ОДНА пропущенная обратная косая молча превращает проверку в «ничего не
+ * нашлось» — то есть в зелёный тест, который ничего не проверяет. Это уже случалось в
+ * этом файле дважды. Со схлопнутым текстом и `includes` экранировать нечего.
+ */
+const flatten = (s) => s.replace(/\s+/g, ' ')
 
 /** Колонки таблицы из `create table` в миграции: имя → остаток строки с типом и флагами. */
 function columnsOf(sql, table) {
@@ -177,6 +194,170 @@ test('обращения: переписка лежит строками, а н�
     'у сообщения должны быть своя сторона, время и автор на момент отправки')
 })
 
+test('мета аккаунта: каждая колонка из карты есть в миграции', async () => {
+  // Мета собиралась из одного jsonb, а типизированные колонки рядом не читались никем —
+  // типы стояли, но не работали. Теперь отображение объявлено списком COLUMNS в
+  // accountsMeta.js, и список обязан совпадать со схемой: колонка, которой нет в базе,
+  // даёт тихую ошибку записи — строка не сохранится, и никто не узнает (MR-290).
+  const code = await readCode('accountsMeta.js')
+  const block = code.match(/const COLUMNS = \[([\s\S]*?)\n\]/)
+  assert.ok(block, 'в accountsMeta.js нет карты COLUMNS')
+  const mapped = [...block[1].matchAll(/'[a-zA-Z]+',\s*'([a-z_]+)'/g)].map((m) => m[1])
+  assert.ok(mapped.length > 25, `карта подозрительно короткая: ${mapped.length}`)
+
+  // Колонки берутся из трёх мест: исходная таблица, владелец из owner-миграции и
+  // 25 новых. Схема таблицы — это вся её история, а не один файл.
+  const sql = await readSql([
+    '2026-07-30-owner-and-types.sql',
+    '2026-09-01-mr290-account-secrets.sql',
+    '2026-09-01-mr290-accounts-meta-columns.sql',
+    '2026-09-01-mr290-proxies-rework.sql',
+  ])
+  const known = new Set([
+    // Колонки из schema.sql — он снимок, а не миграция, поэтому перечислены здесь.
+    'id', 'name', 'username', 'phone', 'status', 'proxy', 'country', 'in_trash', 'updated_at',
+    ...[...sql.matchAll(/add column if not exists ([a-z_]+)/gi)].map((m) => m[1]),
+  ])
+  const missing = mapped.filter((c) => !known.has(c))
+  assert.deepEqual(missing, [], `в схеме нет колонок: ${missing.join(', ')}`)
+})
+
+test('мета аккаунта: владелец лежит в колонке с внешним ключом, а не в json', async () => {
+  // Самый показательный случай задачи: колонка user_id со ссылкой на профиль существует
+  // с июля и была ПУСТА на всех 63 строках, пока доступ резался по data.ownerId.
+  const sql = await readSql('2026-09-01-mr290-accounts-meta-columns.sql')
+  assert.match(sql, /update accounts_meta\s+set user_id = nullif\(data->>'ownerId',''\)/,
+    'владелец должен переехать из json в колонку')
+  const code = await readCode('accountsMeta.js')
+  assert.match(code, /\['ownerId',\s+'user_id',\s+'text'\]/,
+    'карта обязана связывать ownerId с колонкой user_id — иначе колонка снова останется пустой')
+})
+
+test('выдачи субу: права лежат строками со ссылками, а не массивами text[]', async () => {
+  // profiles.account_ids и account_group_ids — это ВЫДАННЫЕ ПРАВА. Массив база проверить
+  // не может, и в боевых данных нашлось право на аккаунт acc_9 и группу grp_1, которых
+  // не существует: интерфейс выдачу показывал, проверка доступа молча её не находила.
+  // Право, ведущее в никуда, — худший вид ошибки в доступах: он не виден ни с одной
+  // стороны (MR-290).
+  const sql = await readSql('2026-09-01-mr290-subuser-grants.sql')
+  for (const [table, col, parent] of [
+    ['profile_account_grants', 'account_id', 'accounts_meta'],
+    ['profile_group_grants', 'group_id', 'account_groups'],
+  ]) {
+    // Сверяем по тексту со схлопнутыми пробелами, а не регуляркой: в regexp пришлось бы
+    // экранировать скобки, и одна лишняя обратная косая молча превратила бы проверку в
+    // «ничего не нашлось» — то есть в зелёный тест, который ничего не проверяет.
+    const flat = sql.replace(/\s+/g, ' ')
+    const cols = columnsOf(sql, table)
+    assert.ok(cols.has('profile_id') && cols.has(col), `${table}: выдача — это пара «профиль + объект»`)
+    assert.ok(flat.includes(`references ${parent}(id) on delete cascade`),
+      `${table}: объект удалён — выданные на него права уходят с ним`)
+    assert.ok(flat.includes(`primary key (profile_id, ${col})`),
+      `${table}: одно и то же право нельзя выдать дважды`)
+  }
+
+  /*
+   * ЧИТАЕМ из таблиц связей, ПИШЕМ пока в оба места — и это не полумера.
+   *
+   * Сначала здесь стояло обратное требование: «в колонки больше не пишем, два источника
+   * однажды разойдутся». Для ПРАВ рассуждение оказалось задом наперёд. Миграции
+   * применяются до выката кода, и в это окно профили читает предыдущая версия — из
+   * колонок. Перестав их обновлять, мы получаем не один источник правды, а окно, в
+   * котором снятое право продолжает действовать, а выданное не действует. Расхождение на
+   * минуты дешевле, чем доступ, живущий своей жизнью.
+   *
+   * Требование «писать только в таблицы» переезжает в выпуск N+1 — туда же, где колонки
+   * сносятся (supabase/next-release/, шаг 2 в README).
+   */
+  const code = await readCode('users.js')
+  assert.match(code, /account_ids: next\.accountIds \|\| \[\]/,
+    'на время переходного выпуска выдачи обязаны писаться и в колонку профиля')
+  assert.match(code, /roles: \{ table: 'profile_roles'/,
+    'и при этом читаться из таблиц связей')
+})
+
+test('прокси: аккаунт связан ссылкой на каталог, а не строкой подключения', async () => {
+  /*
+   * Ровно тот случай, ради которого затевалась вся задача. Связь «аккаунт ↔ прокси» была
+   * СТРОКОЙ: в accounts_meta.proxy лежал собранный URL, а сравнение шло по совпадению
+   * этой строки с URL, собранным из каталога. На боевой она потерялась целиком — у 55
+   * аккаунтов остался proxyId в json, а строка обнулилась, и все они ходили в Telegram
+   * напрямую с адреса сервера. Ни интерфейс, ни счётчик занятости этого не показывали.
+   */
+  const sql = await readSql('2026-09-01-mr290-proxies-rework.sql')
+  const flat = sql.replace(/\s+/g, ' ')
+  assert.ok(flat.includes('foreign key (proxy_id) references proxies(id) on delete set null'),
+    'связь должна быть внешним ключом: удалили прокси — аккаунт остаётся, но без прокси и это видно')
+  assert.ok(flat.includes("update accounts_meta set proxy_id = nullif(data->>'proxyId','')"),
+    'потерянная связь восстанавливается из json')
+
+  // Строку подключения больше не хранят: два источника одной связи однажды разойдутся.
+  const meta = await readCode('accountsMeta.js')
+  assert.match(meta, /\['proxyId',\s+'proxy_id',\s+'text'\]/, 'в карте колонок должна быть ссылка')
+  assert.match(meta, /delete rest\.proxy/, 'собранная строка в базу не пишется')
+
+  // Счёт занятости и пометка статуса — по идентификатору, а не по совпадению строк.
+  const px = await readCode('proxies.js')
+  assert.match(px, /const id = meta\?\.proxyId/, 'занятость считается по ссылке')
+  assert.match(px, /export async function markProxyStatus\(proxyId, status\)/,
+    'статус ставится прокси по идентификатору, а не по разбору URL')
+  assert.match(px, /hasPassword: !!stored/, 'каталог наружу отдаётся без паролей')
+})
+
+test('деньги: служебные владельцы объявлены в справочнике, а не только в коде', async () => {
+  // `__default` и `workspace` — не мусор и не сироты, а понятия предметной области:
+  // системный кошелёк платформы и общая подписка пространства. Пока они были строкой в
+  // коде, база не могла отличить их от опечатки, и внешний ключ на деньги поставить было
+  // нельзя. Теперь они строки wallet_owners — и списки обязаны совпадать: разойдутся —
+  // запись под забытым ключом упрётся во внешний ключ уже на боевой (MR-290).
+  const sql = await readSql('2026-09-01-mr290-wallet-owners.sql')
+  const block = sql.match(/insert into wallet_owners \(id, kind, note\) values([\s\S]*?)on conflict/)
+  assert.ok(block, 'в миграции нет вставки служебных владельцев')
+  const inSql = [...block[1].matchAll(/\('([^']+)',\s*'(system|workspace)'/g)].map((m) => m[1]).sort()
+
+  for (const file of ['tokenCredit.js', 'subscriptionBilling.js']) {
+    const code = await readCode(file)
+    const skip = code.match(/const SKIP = new Set\(\[([^\]]+)\]\)/)
+    assert.ok(skip, `в ${file} нет списка служебных владельцев SKIP`)
+    const inCode = skip[1].split(',').map((s) => s.trim().replace(/'/g, '')).sort()
+    assert.deepEqual(inCode, inSql, [
+      `Служебные владельцы кошелька разошлись: ${file} против миграции wallet-owners.`,
+      'Ключ, которого нет в справочнике, отвергнет внешний ключ — списание не пройдёт.',
+    ].join('\n'))
+  }
+})
+
+test('деньги: тестовые записи помечены, а не удалены', async () => {
+  // Решение владельца 01.09: 27 строк оплат и 12 строк кошелька, записанных прогонами
+  // тестов прямо в боевую базу, помечаются видом `test` и остаются на месте. Удалить их
+  // значило бы порвать историю, которая уже посчитана в отчётах.
+  const sql = await readSql('2026-09-01-mr290-wallet-owners.sql')
+  assert.match(sql, /kind in \('user', 'system', 'workspace', 'test'\)/,
+    'у владельца кошелька должен быть отдельный вид для тестовых записей')
+  assert.ok(!/delete from (payments|wallet_log|coin_balance)/i.test(sql),
+    'денежные строки эта миграция удалять не должна — только помечать владельца')
+})
+
+test('группы аккаунтов: состав лежит строками со ссылками, а не JSON-массивом', async () => {
+  // То же правило («JSON в базе = ошибка»), но цена выше: на группы выдаются права.
+  // Массив идентификаторов база проверить не может, поэтому в группе спокойно оставался
+  // удалённый аккаунт — право на него просто переставало действовать, молча. Теперь это
+  // таблица связи с двумя внешними ключами: несуществующий аккаунт в неё не положить,
+  // а удалённый уходит из всех групп сам (MR-290).
+  const sql = await readSql('2026-09-01-mr290-group-members.sql')
+  const cols = columnsOf(sql, 'account_group_members')
+  assert.ok(cols.has('group_id') && cols.has('account_id'), 'состав — это пара «группа + аккаунт»')
+  assert.ok(cols.has('position'), 'порядок аккаунтов в группе был свойством массива — в таблице его надо хранить явно')
+  assert.match(sql, /references account_groups\(id\)\s+on delete cascade/i, 'группа удалена — состав уходит с ней')
+  assert.match(sql, /references accounts_meta\(id\)\s+on delete cascade/i, 'аккаунт удалён — он уходит из всех групп сам')
+  assert.match(sql, /primary key \(group_id, account_id\)/i, 'один аккаунт нельзя добавить в группу дважды')
+
+  // И код больше не пишет состав в jsonb-колонку: два источника состава однажды разойдутся,
+  // и права начнут зависеть от того, какой из них прочитали.
+  const code = await readCode('accountGroups.js')
+  assert.ok(!/account_ids\s*:/.test(code), 'account_ids больше не пишется — состав живёт в account_group_members')
+})
+
 test('учёт времени: открытая смена отличима от закрытой', async () => {
   // На этом держится и «человек на смене прямо сейчас», и закрытие выхода: без NULL
   // пришлось бы городить признак-флаг и следить, чтобы он не разошёлся с временем.
@@ -264,4 +445,360 @@ test('счётчик переходов: сырые адреса посетит�
   assert.ok(!cols.has('ip') && !cols.has('user_agent'), 'ради счётчика адреса посетителей держать незачем')
   const code = await readCode('linkTracker.js')
   assert.ok(/createHash\('sha256'\)/.test(code), 'отпечаток обязан быть хешем')
+})
+
+test('массивы text[]: роли и модули переехали в таблицы связей', async () => {
+  // Массив идентификаторов — это внешний ключ, который база не проверяет: роль удалили,
+  // а её id остался лежать в profiles.role_ids. Плюс невозможность спросить «кому выдана
+  // роль X» иначе, чем развернув массивы у всех профилей.
+  const sql = await readSql('2026-09-02-mr290-arrays-to-links.sql')
+  const flat = flatten(sql)
+  for (const [table, col, parent] of [
+    ['profile_roles', 'role_id', 'roles(id)'],
+    ['user_roles', 'role_id', 'roles(id)'],
+    ['wallet_log_modules', 'module_id', 'modules(id)'],
+  ]) {
+    assert.ok(flat.includes('create table if not exists ' + table), table + ': таблицы нет');
+    assert.ok(flat.includes(col + ' text not null references ' + parent) || flat.includes(col + ' bigint not null references ' + parent),
+      table + '.' + col + ': нужна ссылка на ' + parent)
+    assert.ok(new RegExp('create table if not exists ' + table + '[^;]*position').test(flat),
+      table + ': нужна колонка position — порядок в массиве был значащим')
+  }
+  // Кампании: таблица существовала как проекция, порядок в ней не хранился.
+  assert.ok(flat.includes('alter table campaign_modules add column if not exists position'),
+    'campaign_modules: порядок модулей должен храниться, а не восстанавливаться наугад')
+})
+
+test('состав подписки в журнале кошелька нельзя стереть удалением модуля', async () => {
+  // Журнал — деньги: запись обязана объяснять, за что списали, и через год. Каскад стёр
+  // бы состав подписки вместе с модулем, оставив сумму без основания. Отсюда restrict,
+  // хотя у ролей рядом стоит cascade: это не разнобой, а разные требования.
+  const flat = flatten(await readSql('2026-09-02-mr290-arrays-to-links.sql'))
+  assert.ok(flat.includes('module_id bigint not null references modules(id) on delete restrict'),
+    'состав подписки в журнале должен держать модуль, а не исчезать вместе с ним')
+})
+
+test('строка журнала кошелька и её состав пишутся одной транзакцией', async () => {
+  // Через PostgREST это два запроса, и между ними процесс может умереть — в базе
+  // останется списание без основания. Для денег половинчатая запись хуже отказа.
+  const sql = await readSql('2026-09-02-mr290-arrays-to-links.sql')
+  assert.match(sql, /create or replace function wallet_log_append/, 'нужна функция, а не два запроса из кода')
+  const тело = sql.slice(sql.indexOf('create or replace function wallet_log_append'))
+  assert.ok(тело.includes('insert into wallet_log (') && тело.includes('insert into wallet_log_modules'),
+    'обе вставки обязаны быть внутри одной функции')
+  assert.match(тело, /raise exception/, 'неизвестный модуль обязан отменять запись, а не пропускаться молча')
+
+  const code = await readCode('balance.js')
+  assert.ok(code.includes(String.raw`db.rpc('wallet_log_append'`), 'журнал должен писаться через функцию')
+})
+
+test('роли профиля читаются из связей, а порядок первой роли сохраняется', async () => {
+  // roleId пользователя — это role_ids[0], «первичная» роль: ею подписаны карточки в
+  // админке. Множество строк без position потеряло бы это различие молча.
+  const code = await readCode('users.js')
+  assert.ok(flatten(code).includes("roles: { table: 'profile_roles', column: 'role_id', ordered: true }"),
+    'роли обязаны читаться из таблицы связей')
+  assert.ok(code.includes(String.raw`order('position'`), 'порядок ролей должен приходить отсортированным из базы')
+})
+
+test('модули кампании — источник в таблице связей, а не проекция', async () => {
+  // Таблица была проекцией: писали в массив, связи догонял syncModuleLinks следом.
+  // Проекция расходится с источником при любой записи мимо неё — а мимо неё пишет весь
+  // campaigns.js.
+  const code = await readCode('campaigns.js')
+  assert.ok(code.includes(String.raw`writeModuleLinks(db, 'campaign_modules'`), 'кампания обязана писать связи сама')
+  assert.ok(code.includes(String.raw`readModuleLinks(db, 'campaign_modules'`), 'и читать их же')
+})
+
+test('карточка канала: каждое поле карты имеет колонку в схеме', async () => {
+  // Мешок channels.data назывался «всё остальное», но остального там не было: 13 полей,
+  // и каждое лежало у всех 85 каналов. Опечатка в имени колонки здесь — тихая потеря
+  // данных: запись пройдёт, поле не сохранится, и узнаем мы об этом от людей.
+  const code = await readCode('channels.js')
+  const block = code.match(/const COLUMNS = \[([\s\S]*?)\n\]/)
+  assert.ok(block, 'в channels.js нет карты COLUMNS')
+  const columns = [...block[1].matchAll(/'[a-zA-Z]+',\s*'([a-z_]+)'/g)].map((m) => m[1])
+  assert.ok(columns.length > 15, `карта подозрительно короткая: ${columns.length}`)
+
+  const sql = await readSql(['2026-07-30-remaining-stores.sql', '2026-09-02-mr290-channels-columns.sql'])
+  const known = new Set([
+    ...columnsOf(sql, 'channels').keys(),
+    ...[...sql.matchAll(/alter table channels add column if not exists ([a-z_]+)/gi)].map((m) => m[1]),
+    'user_id', // приезжает owner-миграцией
+  ])
+  const missing = columns.filter((c) => !known.has(c))
+  assert.deepEqual(missing, [], `в схеме нет колонок: ${missing.join(', ')}`)
+})
+
+test('источники канала: список строками, и потерять его нечем', async () => {
+  /*
+   * По sources режется ДОСТУП: channelsForRequest показывает оператору только каналы,
+   * которые нашли его задачи. Канал с пустым списком источников не виден никому — то есть
+   * любая потеря этого списка выглядит как «база каналов пропала», а не как «сбойнуло
+   * служебное поле».
+   *
+   * Проверялось это раньше наличием КОММЕНТАРИЯ в коде. Так нельзя: комментарий переживёт
+   * любую правку поведения. Здесь проверяются три места, каждое из которых уже успело
+   * оказаться дырой.
+   */
+  const flat = flatten(await readSql('2026-09-02-mr290-channels-columns.sql'))
+  assert.ok(flat.includes('create table if not exists channel_sources'), 'нет таблицы источников')
+  assert.ok(flat.includes('channel_id text not null references channels(id) on delete cascade'),
+    'источник обязан ссылаться на канал')
+
+  const code = flatten(await readCode('channels.js'))
+  assert.ok(code.includes("{ field: 'sources', table: 'channel_sources'"), 'источники должны читаться из таблицы')
+
+  // 1. Снос при записи ограничен своими каналами. Было `delete().neq('channel_id','')` —
+  //    то есть вся таблица, и запись части каналов уносила источники у остальных.
+  assert.ok(!code.includes("delete().neq('channel_id', '')"),
+    'снос всей таблицы источников: запись части каналов лишит остальных видимости')
+  assert.ok(code.includes(".delete().in('channel_id', ids.slice(i, i + 200))"),
+    'снимать источники нужно только у записываемых каналов')
+
+  // 2. Отказ записи списков не проглатывается: «сохранили» в ответе и пустая таблица в
+  //    базе — худший исход именно здесь.
+  assert.ok(code.includes('if (!await writeLists(db, all))'),
+    'результат записи списков обязан проверяться, а не уходить в console.warn')
+
+  // 3. Пустой ответ таблицы не затирает непустой список из мешка: у канала, заведённого
+  //    предыдущей версией в окно выката, строк в таблице нет вовсе.
+  assert.ok(code.includes('if (изТаблицы?.length) c[field] = изТаблицы'),
+    'пустой результат таблицы не должен затирать список из мешка, пока мешок ещё пишется')
+})
+
+test('источники канала намеренно без внешнего ключа на задачи', async () => {
+  // Ключ напрашивается, но задачи переезжают в базу отдельным скриптом при выкате, и до
+  // его прогона половина идентификаторов ни на что не сошлётся. Внешний ключ в этот
+  // момент выбросил бы такие строки — и каналы исчезли бы из интерфейса у владельцев.
+  // Тест держит это решение объяснённым: следующий, кто захочет «дочинить» схему,
+  // увидит причину, а не догадку.
+  const sql = await readSql('2026-09-02-mr290-channels-columns.sql')
+  const блок = sql.slice(sql.indexOf('create table if not exists channel_sources'))
+  assert.ok(!/task_id\s+text\s+not null\s+references/i.test(блок),
+    'ключ на tasks добавляется отдельной миграцией — ПОСЛЕ переезда задач в базу')
+  assert.match(sql, /Внешнего ключа на `tasks` здесь СОЗНАТЕЛЬНО НЕТ/,
+    'решение обязано быть объяснено в самой миграции')
+})
+
+test('усталость: две формы восстановления сведены к одной колонке', async () => {
+  // В боевых данных одна и та же величина записана двумя способами: у восьми аккаунтов
+  // recoveryPerHour (единиц в час), у пяти recoveryEveryMs (за сколько уходит единица).
+  // Приложение сводит их на чтении, но пока обе лежат рядом, отчёт мимо приложения
+  // посчитает неправильно, а вторую форму однажды забудут обновить.
+  const sql = await readSql('2026-09-02-mr290-json-bags.sql')
+  assert.match(sql, /recovery_every_ms bigint/, 'нужна одна колонка на обе формы')
+  assert.match(sql, /round\(3600000 \/ \(data #>> '\{profile,recoveryPerHour\}'\)::numeric\)/,
+    'старая форма обязана пересчитываться в новую, а не теряться')
+
+  const code = await readCode('accountActivity.js')
+  assert.ok(code.includes('delete out.profile.recoveryPerHour'),
+    'после чтения из колонки старая форма обязана исчезнуть — иначе две формы снова разойдутся')
+})
+
+test('распорядок дня: час и вероятность проверяет база, а не приложение', async () => {
+  // В мешке ни час 25, ни вероятность 5 никто бы не отверг.
+  const flat = flatten(await readSql('2026-09-02-mr290-json-bags.sql'))
+  assert.ok(flat.includes('hour int not null check (hour between 0 and 23)'), 'час обязан быть ограничен')
+  assert.ok(flat.includes('probability numeric not null check (probability >= 0 and probability <= 1)'),
+    'вероятность обязана быть долей, а не любым числом')
+  assert.ok(flat.includes('account_id text not null references accounts_meta(id) on delete cascade'),
+    'распорядок удалённого аккаунта не должен оставаться висеть')
+})
+
+test('цены: каталоги стали таблицами с проверками, а не тремя json-ячейками', async () => {
+  // Это ЦЕНЫ — то, по чему выставляют счета. Скидка 500%, пакет на минус сто монет и
+  // правка цены у несуществующего модуля записались бы в json молча.
+  const flat = flatten(await readSql('2026-09-02-mr290-json-bags.sql'))
+  assert.ok(flat.includes('coins numeric not null check (coins > 0)'), 'пакет на ноль монет — не пакет')
+  assert.ok(flat.includes("unit text not null check (unit in ('week', 'month', 'year'))"), 'единица периода из белого списка')
+  assert.ok(flat.includes('discount numeric not null default 0 check (discount >= 0 and discount <= 0.9)'),
+    'скидка обязана быть ограничена сверху')
+  assert.ok(flat.includes('module_id bigint primary key references modules(id) on delete cascade'),
+    'правка цены обязана ссылаться на существующий модуль')
+
+  const code = await readCode('priceStore.js')
+  assert.ok(code.includes("{ field: 'coinPacks', table: 'coin_packs'"), 'пакеты монет должны читаться из таблицы')
+  assert.ok(code.includes("{ field: 'periods', table: 'subscription_periods'"), 'периоды должны читаться из таблицы')
+})
+
+test('цель: статус и режим периода ограничены базой', async () => {
+  // Статус ограничен белым списком в коде, а в базе им мог оказаться любой текст.
+  const flat = flatten(await readSql('2026-09-02-mr290-json-bags.sql'))
+  assert.ok(flat.includes("check (status is null or status in ('active', 'paused', 'done', 'archived'))"),
+    'статус цели обязан быть ограничен')
+  assert.ok(flat.includes("check (period_mode is null or period_mode in ('all', 'from'))"),
+    'режим периода обязан быть ограничен')
+
+  const code = await readCode('goals.js')
+  const block = code.match(/const COLUMNS = \[([\s\S]*?)\n\]/)
+  assert.ok(block, 'в goals.js нет карты COLUMNS')
+  const columns = [...block[1].matchAll(/\],\s*'([a-z_]+)'/g)].map((m) => m[1])
+  const sql = await readSql('2026-09-02-mr290-json-bags.sql')
+  const known = new Set([...sql.matchAll(/alter table goals add column if not exists ([a-z_]+)/gi)].map((m) => m[1]))
+  const missing = columns.filter((c) => !known.has(c))
+  assert.deepEqual(missing, [], `в схеме нет колонок цели: ${missing.join(', ')}`)
+})
+
+test('права роли: строками, с ограничением на значение', async () => {
+  // 555 правил в боевых данных, у каждого ровно два значения. Опечатка `alow`
+  // записывалась молча и читалась как «не allow» — право пропадало без ошибки.
+  const flat = flatten(await readSql('2026-09-02-mr290-role-permissions.sql'))
+  assert.ok(flat.includes("effect text not null check (effect in ('allow', 'deny'))"),
+    'третьего значения у права быть не должно')
+  assert.ok(flat.includes("scope text not null check (scope in ('module', 'block', 'section', 'resource'))"),
+    'разрез права обязан быть ограничен')
+  assert.ok(flat.includes('role_id text not null references roles(id) on delete cascade'),
+    'права удалённой роли не должны оставаться висеть')
+  // Ради вопроса «у кого есть доступ к этому объекту» — при разборе инцидента он нужен сразу.
+  assert.ok(flat.includes('create index if not exists role_permissions_subject_idx on role_permissions (scope, subject, item_id)'),
+    'нужен индекс по объекту права')
+
+  const code = await readCode('roles.js')
+  assert.ok(code.includes("db.from('role_permissions')"), 'права должны читаться и писаться строками')
+  assert.ok(code.includes('rules ? rulesToPermissions(rules) : (r.permissions || {})'),
+    'пустой набор правил обязан означать «прав нет», а не «читать не удалось»')
+})
+
+test('права роли: item_id пустая строка, а не NULL', async () => {
+  // item_id входит в первичный ключ, а NULL в ключе не сравнивается сам с собой —
+  // дубли правил перестали бы отсекаться, и одно и то же право легло бы дважды.
+  const flat = flatten(await readSql('2026-09-02-mr290-role-permissions.sql'))
+  assert.ok(flat.includes("item_id text not null default ''"), 'item_id обязан быть not null')
+  assert.ok(flat.includes('primary key (role_id, scope, subject, item_id)'), 'ключ обязан включать item_id')
+})
+
+test('кампания: закрепление аккаунта — настоящая связь, а не строка в массиве', async () => {
+  // Аккаунт удаляли — закрепление оставалось: идентификатор, который ничего не находит.
+  // Кампания молча работала меньшим составом, и заметить это можно было только по числу
+  // действий.
+  const flat = flatten(await readSql('2026-09-02-mr290-remaining-bags.sql'))
+  assert.ok(flat.includes('account_id text not null references accounts_meta(id) on delete cascade'),
+    'закрепление обязано уходить вместе с аккаунтом')
+  assert.ok(flat.includes('agent_id text not null references agents(id) on delete cascade'),
+    'удалённый агент не должен оставаться закреплённым за модулем кампании')
+
+  const code = await readCode('campaigns.js')
+  assert.ok(code.includes("{ field: 'accountIds', table: 'campaign_accounts'"), 'закрепления должны читаться из таблицы')
+  assert.ok(code.includes("db.from('campaign_module_agents')"), 'агенты по модулям — тоже строками')
+})
+
+test('цели кампании намеренно без внешнего ключа на каналы', async () => {
+  // Цель задают именем (@durov), и канала может ещё не быть в базе — его приносит
+  // парсер уже во время работы. Ключ означал бы запрет на обычный сценарий.
+  const sql = await readSql('2026-09-02-mr290-remaining-bags.sql')
+  const блок = sql.slice(sql.indexOf('create table if not exists campaign_targets'))
+  assert.ok(!/target\s+text\s+not null\s+references/i.test(блок), 'ключа на channels здесь быть не должно')
+  assert.match(sql, /Внешнего ключа на `channels` тут НЕТ и быть не может/, 'решение обязано быть объяснено')
+})
+
+test('json остаётся там, где форма данных принадлежит не базе', async () => {
+  // Не всякий json — ошибка. Настройки модуля и тело отложенной кампании меняются
+  // вместе с модулем и с API; разложить их по колонкам значит менять схему при каждой
+  // правке настроек. Тест держит границу явной, чтобы её не стёрли в обе стороны.
+  const sql = await readSql('2026-09-02-mr290-remaining-bags.sql')
+  assert.match(sql, /ГДЕ JSON ОСТАЁТСЯ И ПОЧЕМУ/, 'граница обязана быть объяснена в миграции')
+  assert.match(sql, /add column if not exists body\s+jsonb/, 'тело отложенной кампании остаётся json')
+
+  const code = await readCode('campaigns.js')
+  assert.match(code, /Настройки модулей \(`moduleSettings`, `moduleTargets`, `settings`\) остаются json/,
+    'в коде должно быть написано, что эти поля оставлены json намеренно')
+})
+
+test('планировщик выбирает созревшие расписания по индексу, а не разбором json', async () => {
+  const flat = flatten(await readSql('2026-09-02-mr290-remaining-bags.sql'))
+  assert.ok(flat.includes('create index if not exists campaign_schedules_due_idx on campaign_schedules (run_at) where enabled and run_at is not null'),
+    'единственный запрос планировщика обязан идти по индексу')
+  assert.ok(flat.includes("check (repeat is null or repeat in ('none', 'daily'))"), 'повтор обязан быть ограничен')
+})
+
+test('суточные счётчики и доверие работают через базу, а не мимо неё', async () => {
+  // Обе таблицы существовали с самого начала и были ПУСТЫ: код читал и писал файл.
+  // На потолках держится защита аккаунта от бана, а файловый инкремент — это
+  // «прочитать, увеличить, записать»: два воркера пробивают потолок незаметно.
+  const daily = await readCode('lib/dailyActions.js')
+  assert.ok(daily.includes("db.rpc('bump_daily_action'"),
+    'инкремент обязан идти одним запросом, а не чтением-записью файла')
+  assert.ok(daily.includes("db.from('daily_actions')"), 'счётчики обязаны читаться из базы')
+
+  const trust = await readCode('lib/trustCache.js')
+  assert.ok(trust.includes("db.from('trust_cache')"), 'кэш доверия обязан жить в базе')
+
+  const flat = flatten(await readSql('2026-09-02-mr290-counters-live.sql'))
+  assert.ok(flat.includes('foreign key (account_id) references accounts_meta(id) on delete cascade'),
+    'счётчики удалённого аккаунта не должны оставаться висеть')
+  assert.ok(flat.includes('check (score between 0 and 100)'), 'доверие живёт по шкале 0–100')
+})
+
+test('окно переписки читает историю из базы, а не из файлов задач', async () => {
+  // Файлы после переезда задач перестают пополняться, а функция продолжила бы работать —
+  // молча возвращая пусто. Экран сказал бы «ещё не переписывались» ровно там, где пустой
+  // диалог при живой отправке означает, что аккаунт помечен спамом.
+  const code = await readCode('lib/outbox.js')
+  assert.ok(code.includes("db.from('task_events')"), 'история обязана читаться из базы')
+  assert.ok(code.includes("eq('field', 'history')"), 'нужны именно записи истории')
+  assert.ok(code.includes('outgoingFromFiles'), 'файловый путь остаётся запасным, а не выбрасывается')
+})
+
+test('снос старых колонок готов и лежит там, где его не применит деплой', async () => {
+  // Порядок выката: сначала миграции, потом код. Между ними работает ПРЕДЫДУЩАЯ версия
+  // приложения — уже с новой схемой. Снести старую колонку тем же выпуском значит дать
+  // ей в это окно обращаться к колонке, которой нет; окно короткое, но в него панель
+  // управляет живыми аккаунтами.
+  const files = await fs.readdir(new URL('../../supabase/migrations/', import.meta.url))
+  const преждевременные = files.filter((f) => /drop-legacy|drop-secrets/.test(f))
+  assert.deepEqual(преждевременные, [],
+    'сносы должны лежать в supabase/next-release/, куда раннер миграций не заходит')
+
+  const drop = await fs.readFile(new URL('../../supabase/next-release/2026-09-03-mr290-drop-legacy.sql', import.meta.url), 'utf8')
+  // Каждая колонка, про которую в MR-290 написано «снимем следующим выпуском», обязана
+  // быть в списке сноса. Иначе обещание останется обещанием: мешок и колонка будут жить
+  // рядом, и однажды разойдутся.
+  for (const [table, column] of [
+    ['profiles', 'role_ids'], ['profiles', 'account_ids'], ['profiles', 'account_group_ids'],
+    ['users', 'role_ids'], ['campaigns', 'modules'], ['wallet_log', 'modules'],
+    ['channels', 'data'], ['goals', 'data'], ['account_activity', 'data'], ['agents', 'data'],
+    ['roles', 'permissions'], ['account_groups', 'account_ids'], ['accounts_meta', 'proxy'],
+    ['price_overrides', 'modules'], ['price_overrides', 'coin_packs'], ['price_overrides', 'periods'],
+  ]) {
+    assert.ok(flatten(drop).includes(`alter table ${table} drop column if exists ${column}`),
+      `${table}.${column} обещали снести, но в списке сноса её нет`)
+  }
+  // Страховка: снос не должен пройти, если перенос не состоялся.
+  assert.match(drop, /переезд не завершён, снос отменён/, 'нужна проверка перед сносом')
+})
+
+test('снос открытых секретов отделён от обычного сноса', async () => {
+  // У него условие другое: не «прошёл выпуск», а «человек запустил перенос и проверил».
+  // Облачный пароль 2FA неоткуда восстановить — снос до переноса это не откат из
+  // бэкапа, а потеря доступа к аккаунтам.
+  const sql = await fs.readFile(new URL('../../supabase/next-release/2026-09-03-mr290-drop-secrets.sql', import.meta.url), 'utf8')
+  assert.match(sql, /ещё открытым текстом и не зашифрован — сначала encrypt-secrets/, 'нужна проверка перед сносом 2FA')
+  assert.match(sql, /ещё открытым текстом — сначала encrypt-proxy-passwords/, 'нужна проверка перед сносом пароля прокси')
+  assert.ok(flatten(sql).includes('alter table proxies drop column if exists password'), 'открытый пароль прокси должен сноситься')
+  assert.ok(flatten(sql).includes("update accounts_meta set data = data - 'twoFA'"), 'открытый пароль 2FA должен сноситься')
+})
+
+test('исключение из правила двойной записи объявлено во всех трёх местах', async () => {
+  /*
+   * Время переходит в timestamptz прямо в колонке — писать «и в новое, и в старое» там
+   * физически некуда. Это единственное отступление от правила, на котором держится весь
+   * выпуск, и молчаливым оно быть не может: читатель миграции, читатель инструкции по
+   * выкату и читатель плана следующего выпуска должны узнать об этом каждый на своём
+   * месте. Тест держит три текста согласованными — разойдясь, они дадут выкат без
+   * остановки сервиса и сломанные обращения в поддержку.
+   */
+  const миграция = await readSql('2026-09-02-mr290-time-types.sql')
+  assert.match(миграция, /ЕДИНСТВЕННОЕ ИСКЛЮЧЕНИЕ ИЗ ПРАВИЛА/, 'миграция обязана объявить себя исключением')
+  // Схлопываем: строка переносится, и между словами оказывается «-- » начала комментария.
+  assert.ok(flatten(миграция).includes('ПРИ ОСТАНОВЛЕННОМ СЕРВИСЕ') || flatten(миграция).includes('ПРИ -- ОСТАНОВЛЕННОМ СЕРВИСЕ'),
+    'и назвать условие выката')
+
+  const deploy = await fs.readFile(new URL('../../docs/DEPLOY.md', import.meta.url), 'utf8')
+  assert.match(deploy, /Выкат MR-290 идёт ПРИ ОСТАНОВЛЕННОМ СЕРВИСЕ/, 'инструкция по выкату обязана это требовать')
+  assert.ok(deploy.includes('systemctl stop ai-incubator') && deploy.indexOf('systemctl stop ai-incubator') < deploy.indexOf('migrate.mjs'),
+    'остановка обязана идти ДО миграций, иначе смысл теряется')
+
+  const план = await fs.readFile(new URL('../../supabase/next-release/README.md', import.meta.url), 'utf8')
+  assert.match(план, /Одно исключение, и оно осознанное/, 'план следующего выпуска обязан знать про исключение')
 })

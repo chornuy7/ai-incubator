@@ -9,18 +9,72 @@ import { getSupabase, supabaseEnabled } from './lib/supabase.js'
 import { insertWithOwner, updateWithOwner, ownerOf } from './lib/ownerColumn.js'
 
 function sbGoals() { return supabaseEnabled() ? getSupabase() : null }
-// row → полный объект цели: data-jsonb несёт все поля кроме id/name/времени.
-const rowToGoal = (r) => ({ id: r.id, name: r.name, ...(r.data || {}), userId: ownerOf(r), createdAt: r.created_at ? new Date(r.created_at).getTime() : 0, updatedAt: r.updated_at ? new Date(r.updated_at).getTime() : 0 })
+
+/*
+ * MR-290: поля цели — колонками, а не мешком `data`.
+ *
+ * Мешок держал пять полей, и все пять есть у каждой цели. Два из них — вложенные объекты
+ * `metric` и `period`, но и они фиксированы: вид метрики, цель, единица; режим периода и
+ * дата начала. Ничего открытого — обычная запись, у которой отобрали типы и проверки.
+ * Статус цели, например, ограничен белым списком в коде, а в базе им мог оказаться любой
+ * текст: расхождение всплыло бы отчётом, где половина целей «в неизвестном состоянии».
+ *
+ * Карта ниже читается как «поле цели ↔ колонка»; вложенные поля записаны путём.
+ */
+const COLUMNS = [
+  // путь в объекте цели, колонка, как переводить
+  [['description'], 'description', 'text'],
+  [['status'], 'status', 'text'],
+  [['priority'], 'priority', 'text'],
+  [['metric', 'kind'], 'metric_kind', 'text'],
+  [['metric', 'target'], 'metric_target', 'number'],
+  [['metric', 'unit'], 'metric_unit', 'text'],
+  [['period', 'mode'], 'period_mode', 'text'],
+  [['period', 'from'], 'period_from', 'date'],
+]
+
+const getPath = (o, path) => path.reduce((acc, k) => (acc == null ? acc : acc[k]), o)
+function setPath(o, path, v) {
+  let cur = o
+  for (const k of path.slice(0, -1)) cur = (cur[k] ??= {})
+  cur[path.at(-1)] = v
+}
+
+/** row → полный объект цели: колонки перекрывают мешок, пустые колонки его не трогают. */
+const rowToGoal = (r) => {
+  const g = { id: r.id, name: r.name, ...(r.data || {}) }
+  for (const [path, col, kind] of COLUMNS) {
+    if (r[col] == null || r[col] === '') continue
+    setPath(g, path, kind === 'number' ? Number(r[col]) : String(r[col]))
+  }
+  g.userId = ownerOf(r)
+  g.createdAt = r.created_at ? new Date(r.created_at).getTime() : 0
+  g.updatedAt = r.updated_at ? new Date(r.updated_at).getTime() : 0
+  return g
+}
+
 const goalToRow = (g) => {
   const { id, name, createdAt, updatedAt, ...data } = g
   // §11.3: владелец идёт и в колонку user_id (FK), и в data — чтобы сборка работала
   // до применения миграции и после неё (см. lib/ownerColumn.js).
-  return {
+  const row = {
     id, name, data,
     user_id: g.userId || null,
     created_at: new Date(createdAt || Date.now()).toISOString(),
     updated_at: new Date(updatedAt || Date.now()).toISOString(),
   }
+  for (const [path, col, kind] of COLUMNS) {
+    const v = getPath(g, path)
+    if (v == null || v === '') { row[col] = null; continue }
+    if (kind === 'number') { row[col] = Number(v) || 0; continue }
+    // Дата в базе — `date`, и на пустой строке приведение падает. Формат проверяем
+    // здесь: цель с кривым дедлайном должна сохраниться без него, а не не сохраниться.
+    if (kind === 'date') { row[col] = /^\d{4}-\d{2}-\d{2}$/.test(String(v)) ? String(v) : null; continue }
+    row[col] = String(v)
+  }
+  // Мешок пока пишется целиком: миграции применяются до выката кода, и в промежутке
+  // цель читает предыдущая версия, которая знает только его. Уберём вместе с колонкой.
+  return row
 }
 
 /**

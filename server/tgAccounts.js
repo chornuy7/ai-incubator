@@ -1,19 +1,16 @@
-import fs from 'fs/promises'
-import path from 'path'
-import { SESSIONS_DIR } from './config.js'
+// MR-290: файловая система здесь больше не нужна — сессии переехали в базу, и всё
+// обращение к ним идёт через tgAuth.js.
 import { loadAllMeta, getAccountMeta, setAccountMeta, deleteAccountMeta, countryFromPhone, avatarColor } from './accountsMeta.js'
-import { loadSessionString, createClient } from './tgAuth.js'
+import { loadSessionString, createClient, listSessionIds, deleteSession } from './tgAuth.js'
 import { getAccountLock } from './lib/accountLocks.js'
 import { getAllTrustCache } from './lib/trustCache.js'
 import { accountFingerprint } from './lib/deviceFingerprint.js'
 import { computeAccountRisk } from './lib/accountRisk.js'
 import { cachedProxyVerdict } from './accountStats.js'
 
-async function listSessionIds() {
-  await fs.mkdir(SESSIONS_DIR, { recursive: true })
-  const files = await fs.readdir(SESSIONS_DIR)
-  return files.filter((f) => f.endsWith('.session')).map((f) => f.replace(/\.session$/, ''))
-}
+// MR-290: список аккаунтов строится по сессиям, а сессии переехали в базу. Перечисление
+// живёт теперь в tgAuth.js рядом с чтением и записью — иначе при следующем изменении
+// хранилища пришлось бы вспоминать, что где-то есть второй обход каталога.
 
 function formatLastSeen(ts) {
   if (!ts) return '—'
@@ -60,13 +57,21 @@ function toAccountDto(accountId, meta, me, sessionOk) {
     country: meta.country || countryFromPhone(phone),
     status,
     lastSeen: formatLastSeen(meta.updatedAt || meta.createdAt),
+    // MR-290: наружу идут ОБА — ссылка (по ней панель считает занятость и назначает)
+    // и собранная строка для показа. Строку собирает сервер из каталога, поэтому в
+    // браузер больше не уезжают логины и пароли прокси.
+    proxyId: meta.proxyId || null,
     proxy: meta.proxy || '—',
     // note патчится через PATCH /accounts/:id, но в DTO его не было — заметка
     // сохранялась и пропадала. Нужна, в частности, чтобы видеть источник импорта.
     note: meta.note || '',
     // Сам облачный пароль наружу НЕ отдаём (API у нас fail-open) — только признак,
     // что он у нас есть: этого достаточно, чтобы видеть, где реавторизация возможна.
-    has2fa: !!meta.twoFA,
+    //
+    // MR-290: признак приходит уже готовым из loadAllMeta. Раньше здесь стояло
+    // `!!meta.twoFA`, то есть пароль ЛЕЖАЛ в объекте меты и доезжал сюда — достаточно
+    // было одной строки `res.json(meta)` в соседнем месте, чтобы отдать его наружу.
+    has2fa: !!meta.has2fa,
     inTrash: !!meta.inTrash,
     // Временные статусы (спамблок/флудвейт/карантин) сами спадают по сроку — без него
     // оператор видит «спамблок» и не знает, ждать ему или списывать аккаунт.
@@ -234,7 +239,8 @@ export async function tgPatchAccount(accountId, patch) {
    * было негде ни в одном интерфейсе: пул всегда оставался пустым, и крон каждые 12 часов
    * писал «нет свободных сервисных аккаунтов». Поле существовало, работать им было нельзя.
    */
-  const allowed = ['role', 'project', 'country', 'status', 'proxy', 'inTrash', 'note', 'service']
+  // `proxy` (строка подключения) больше не принимается: связь задаётся ссылкой proxyId.
+  const allowed = ['role', 'project', 'country', 'status', 'proxyId', 'inTrash', 'note', 'service']
   /** @type {Record<string, unknown>} */
   const clean = {}
   for (const k of allowed) {
@@ -247,12 +253,9 @@ export async function tgPatchAccount(accountId, patch) {
 }
 
 export async function tgDeleteAccount(accountId) {
-  const sessionPath = path.join(SESSIONS_DIR, `${accountId}.session`)
-  try {
-    await fs.unlink(sessionPath)
-  } catch {
-    /* already gone */
-  }
+  // MR-290: сессию убираем и из базы, и с диска. Раньше удалялся только файл — а на
+  // общей базе сессия оставалась бы живым доступом к аккаунту, которого «уже нет».
+  await deleteSession(accountId)
   await deleteAccountMeta(accountId)
 }
 

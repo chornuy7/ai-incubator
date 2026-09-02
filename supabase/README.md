@@ -4,14 +4,37 @@
 
 - Проект `murmex` создан (West Europe / London, Free).
 - URL проекта: `https://okrdzgwvckrnmhzkxerw.supabase.co`
-- Схема БД: [`schema.sql`](./schema.sql) — таблицы под наши данные + RLS.
+- Схема БД: [`schema.sql`](./schema.sql) — **снимок текущей схемы, а не способ её применить.**
 
 ## Шаги (по порядку)
 
 ### 1. Применить схему
 
-Supabase → слева **SQL Editor** → **New query** → вставить весь `schema.sql` → **Run**.
-Скрипт идемпотентный (`IF NOT EXISTS`), можно прогонять повторно без вреда.
+**Схему накатывают миграции, а не `schema.sql`:**
+
+```bash
+npm run migrate
+```
+
+Файл `schema.sql` с 01.09 (MR-290) **генерируется** из живой базы командой
+`npm run db:schema` и служит справкой и эталоном для сверки. Вставлять его в SQL Editor
+не нужно и вредно: там обычные `create table` без `if not exists` — на непустой базе
+прогон упадёт на первой же существующей таблице.
+
+Порядок при изменении схемы: миграция в `supabase/migrations/` → `npm run migrate` →
+`npm run db:schema` → оба файла одним PR. Тогда в ревью видно не только «что накатили»,
+но и «во что это превратило схему».
+
+Сверить, не правил ли кто-то схему мимо миграций:
+
+```bash
+npm run db:schema -- --check
+```
+
+Расхождение = либо забыли пересобрать снимок, либо ходили в SQL Editor руками. Именно
+так на проде оказались `daily_actions`, `trust_cache`, индекс `channels_peer_uniq` и
+функция `bump_daily_action` — в git их не было ни в одной миграции, и собрать чистое
+окружение из репозитория было нельзя.
 
 Затем ОДИН раз выдать бэкенд-роли права на таблицы (новые sb_secret-ключи не
 получают их автоматически при выключенном авто-expose):
@@ -24,9 +47,10 @@ alter default privileges in schema public grant all on tables to service_role;
 alter default privileges in schema public grant all on sequences to service_role;
 ```
 
-Проверить: слева **Table Editor** — должны появиться таблицы `users`, `coin_balance`,
-`subscriptions`, `price_overrides`, `bundles`, `wallet_log`, `token_ledger`,
-`api_keys`, `goals`, `campaigns`, `leads`, `accounts_meta`, `parsed_channels`.
+Проверить: `npm run db:schema -- --check` — он сверит базу со снимком целиком. Список
+таблиц глазами в Table Editor не сверяют: их 52, и перечислять их здесь значит завести
+ещё один список, который отстанет (прежний перечислял в том числе `parsed_channels`,
+удалённую в августе).
 
 ### 2. Дать бэкенду доступ (креденшлы — ЛОКАЛЬНО, не в git и не в чат)
 

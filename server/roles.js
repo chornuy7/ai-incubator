@@ -11,24 +11,171 @@ import { getSupabase, supabaseEnabled } from './lib/supabase.js'
 
 function sbRoles() { return supabaseEnabled() ? getSupabase() : null }
 /*
- * `personalFor` (чей персональный доступ) ездит ВНУТРИ `permissions`, а не отдельной
- * колонкой. Колонки в таблице `roles` нет, а заводить её миграцией — значит получить
- * сборку, которая на проде до применения миграции молча теряет метку: роль сохранится
- * «ничьей», при следующем сохранении доступа найдена не будет и создастся заново — у
- * суба размножатся роли, а выданный доступ пропадёт. `permissions` же jsonb, он
- * сохраняется целиком и на файлах, и в БД, поэтому метка доезжает всегда.
- * Наверху объекта поле остаётся для удобства чтения.
+ * MR-290: права роли лежат СТРОКАМИ в `role_permissions`, а дерево `permissions`
+ * собирается из них при чтении.
+ *
+ * Структура прав всегда была регулярной — 555 правил в боевых данных, у каждого ровно
+ * два значения, `allow` или `deny`, — но записана деревом, из-за чего «у кого есть
+ * доступ к аккаунту acc_…» требовало перебора всех сорока шести ролей. Для системы
+ * доступа это тот вопрос, который задают при разборе инцидента, то есть когда ответ
+ * нужен сразу. Плюс опечатка: `'alow'` записывалась молча и читалась как «не allow» —
+ * право пропадало без единой ошибки. В колонке с ограничением так уже не выйдет.
+ *
+ * Форма прав НАРУЖУ не меняется: код собирает то же дерево. Менять хранение и формат
+ * проверки доступа одной правкой нельзя — это единственное место, где ошибка означает
+ * не потерянные данные, а открытый чужому человеку кабинет.
+ *
+ * `personalFor` и `freeAccess` переехали в колонки. Раньше они ездили ВНУТРИ прав
+ * намеренно: колонки не было, а заводить её значило получить сборку, которая до
+ * применения миграции молча теряет метку — роль сохранялась бы «ничьей», при следующем
+ * сохранении не находилась бы и создавалась заново, у суба размножались бы роли, а
+ * выданный доступ пропадал. Теперь колонка есть, а `permissions` продолжает писаться
+ * до следующего выпуска — метка доезжает обоими путями.
  */
 const personalOf = (perm) => String(perm?.personalFor || '')
-const rowToRole = (r) => ({
-  id: r.id, name: r.name, permissions: r.permissions || {}, builtin: !!r.builtin,
-  userId: r.user_id || undefined, personalFor: personalOf(r.permissions),
-})
+
+/*
+ * `folderChannels` — единственное право, значение которого СПИСОК, а не allow/deny.
+ *
+ * Устроено оно так: `{ fld_1: ['news_ru', 'crypto'] }` — «из этой папки роли видны только
+ * эти каналы». Пустой список или отсутствие ключа означают ОБРАТНОЕ: видна вся папка
+ * (см. `folderTargetsForRole`). То есть потеря этого права не отбирает доступ, а РАСШИРЯЕТ
+ * его — роль получает папку целиком. Ошибка, которая выглядит как «всё работает».
+ *
+ * В строках список раскладывается по одной строке на канал, а папка и канал склеиваются в
+ * `item_id`. Разделителем взят символ, которого не бывает ни в идентификаторе папки
+ * (`fld_…`), ни в имени канала (буквы, цифры, подчёркивание): двоеточие или дефис однажды
+ * встретились бы внутри значения, и право распалось бы не в том месте.
+ */
+const LIST_RESOURCE = 'folderChannels'
+const LIST_SEP = '/'
+
+/** Разрез прав ↔ поле в дереве. Одна карта на оба перевода — не два списка. */
+const SCOPES = [['module', 'modules'], ['block', 'blocks'], ['section', 'sections'], ['resource', 'resources']]
+const FIELD_BY_SCOPE = new Map(SCOPES)
+const SCOPE_BY_FIELD = new Map(SCOPES.map(([scope, field]) => [field, scope]))
+
+/**
+ * Строки правил → дерево прав в прежнем виде.
+ *
+ * Правила на весь вид ресурса обрабатываются ПЕРВЫМИ, поэлементные — после: правило на
+ * конкретный аккаунт точнее, чем на «аккаунты вообще», и должно перекрывать. В боевых
+ * данных обе формы у одного вида не встречаются, но порядок задан явно, чтобы поведение
+ * не зависело от того, в каком порядке база вернула строки.
+ * @param {Array<{scope:string,subject:string,item_id:string,effect:string}>} rows
+ */
+export function rulesToPermissions(rows) {
+  const p = { modules: {}, blocks: {}, sections: {}, resources: {} }
+  for (const r of [...(rows || [])].sort((a, b) => (a.item_id ? 1 : 0) - (b.item_id ? 1 : 0))) {
+    const field = FIELD_BY_SCOPE.get(r.scope)
+    if (!field) continue
+    if (r.scope === 'resource' && r.item_id) {
+      // Каналы папки — единственное право со СПИСКОМ вместо allow/deny (см. LIST_RESOURCE).
+      if (r.subject === LIST_RESOURCE) {
+        const [folderId, ...хвост] = String(r.item_id).split(LIST_SEP)
+        const target = хвост.join(LIST_SEP)
+        if (!folderId || !target) continue
+        const bucket = p.resources[LIST_RESOURCE] && typeof p.resources[LIST_RESOURCE] === 'object' ? p.resources[LIST_RESOURCE] : {}
+        bucket[folderId] = [...(bucket[folderId] || []), target]
+        p.resources[LIST_RESOURCE] = bucket
+        continue
+      }
+      const cur = p.resources[r.subject]
+      const bucket = cur && typeof cur === 'object' ? cur : {}
+      bucket[r.item_id] = r.effect
+      p.resources[r.subject] = bucket
+      continue
+    }
+    p[field][r.subject] = r.effect
+  }
+  return p
+}
+
+/** Дерево прав → строки правил. Всё, что не `allow`/`deny`, отбрасывается. */
+export function permissionsToRules(roleId, permissions) {
+  const rows = []
+  for (const [field, value] of Object.entries(permissions || {})) {
+    const scope = SCOPE_BY_FIELD.get(field)
+    if (!scope || !value || typeof value !== 'object') continue
+    for (const [subject, v] of Object.entries(value)) {
+      if (!subject) continue
+      if (typeof v === 'string') {
+        if (v === ALLOW || v === DENY) rows.push({ role_id: roleId, scope, subject, item_id: '', effect: v })
+        continue
+      }
+      if (scope !== 'resource' || !v || typeof v !== 'object') continue
+      for (const [itemId, iv] of Object.entries(v)) {
+        if (!itemId) continue
+        // Список каналов папки — строка на канал. Пустой список не пишем: он и означает
+        // «вся папка», то есть отсутствие ограничения, и хранить его нечем.
+        if (subject === LIST_RESOURCE && Array.isArray(iv)) {
+          for (const цель of iv) {
+            const t = String(цель ?? '').trim()
+            if (t && !t.includes(LIST_SEP)) rows.push({ role_id: roleId, scope, subject, item_id: `${itemId}${LIST_SEP}${t}`, effect: ALLOW })
+          }
+          continue
+        }
+        if (iv === ALLOW || iv === DENY) rows.push({ role_id: roleId, scope, subject, item_id: itemId, effect: iv })
+      }
+    }
+  }
+  return rows
+}
+
+export const rowToRole = (r, rules = null) => {
+  // Правила прочитаны — они и есть права. Не прочитаны (миграция не доехала) — остаётся
+  // дерево из колонки. Пустой набор правил у роли, которой правила читали, — это
+  // «прав нет», и подменять его старым деревом нельзя: снятые права вернулись бы.
+  const permissions = rules ? rulesToPermissions(rules) : (r.permissions || {})
+  const freeAccess = r.free_access ?? permissions.freeAccess ?? false
+  const personalFor = r.personal_for || personalOf(r.permissions)
+  /*
+   * `freeAccess` ВОЗВРАЩАЕТСЯ В ДЕРЕВО, хотя хранится колонкой.
+   *
+   * Его читают из прав в четырёх местах — `effectivePermissions`, маршруты модулей и
+   * дважды фронт (`user.permissions.freeAccess`). Собранное из строк дерево этого флага
+   * не содержит: правил такого разреза нет и не должно быть. Не вернув его сюда, мы
+   * получили бы ровно ту поломку, от которой вся задача и защищается: роль со свободным
+   * доступом внезапно упирается в подписку, причём молча и только на проде — в файловом
+   * режиме, где дерево читается как есть, всё бы работало.
+   */
+  if (freeAccess) permissions.freeAccess = true
+  if (personalFor) permissions.personalFor = personalFor
+  return { id: r.id, name: r.name, permissions, builtin: !!r.builtin, userId: r.user_id || undefined, personalFor, freeAccess }
+}
+
 // §11.3: user_id — кто создал роль (до применения миграции колонки нет, см. ownerColumn).
 const roleToRow = (r) => ({
   id: r.id, name: r.name, builtin: !!r.builtin, user_id: r.userId || null,
+  personal_for: r.personalFor || null,
+  free_access: r.permissions?.freeAccess === true || r.freeAccess === true,
+  // Дерево пока пишется тоже: до выката кода доступ считает предыдущая версия — по нему.
   permissions: { ...(r.permissions || {}), ...(r.personalFor ? { personalFor: r.personalFor } : {}) },
 })
+
+/**
+ * Переписать правила роли. Сначала снимаем старые, потом кладём новые — обратный порядок
+ * на миг оставил бы роль с обоими наборами, а лишнее правило в системе доступа это не
+ * «мелкое расхождение», а открытый доступ.
+ */
+async function writeRoleRules(db, role) {
+  const rows = permissionsToRules(role.id, role.permissions)
+  const { error: delErr } = await db.from('role_permissions').delete().eq('role_id', role.id)
+  if (delErr) {
+    // Таблицы ещё нет — миграция не доехала; права остались в дереве, оно пока пишется.
+    if (isMissingTable(delErr)) return
+    /*
+     * Любой другой отказ молчанием не покрываем. Раньше здесь стояло просто `return`, и
+     * это означало: старые правила не сняты, новые не записаны, а наружу ушёл успех.
+     * В системе доступа «сохранили» при несохранённом — худший вид ошибки: человек видит
+     * новые права в интерфейсе и уходит, а действуют прежние.
+     */
+    throw new Error(`[role_permissions] прежние права роли не сняты: ${delErr.message}`)
+  }
+  if (!rows.length) return
+  const { error } = await db.from('role_permissions').upsert(rows, { onConflict: 'role_id,scope,subject,item_id' })
+  if (error) throw new Error(`[role_permissions] права роли не сохранены: ${error.message}`)
+}
 import { MODULE_LABELS } from './lib/accountLocks.js'
 import { listFolders } from './targetFolders.js'
 import { listChannels } from './channels.js'
@@ -332,7 +479,19 @@ export async function listRoles() {
   const db = sbRoles()
   if (db) {
     const { data } = await db.from('roles').select('*').order('created_at', { ascending: true })
-    return (data || []).map(rowToRole)
+    // Правила всех ролей одним запросом: список ролей лежит на горячем пути (проверка
+    // доступа зовёт его на каждый запрос к API), и запрос на роль означал бы N+1.
+    const { data: rules, error: rulesErr } = await db.from('role_permissions')
+      .select('role_id, scope, subject, item_id, effect')
+    const byRole = new Map()
+    if (!rulesErr) for (const r of rules || []) {
+      if (!byRole.has(r.role_id)) byRole.set(r.role_id, [])
+      byRole.get(r.role_id).push(r)
+    }
+    // Ошибка чтения правил — миграция не доехала: тогда права берём из дерева, как
+    // раньше. Разница принципиальная: пустой список правил у роли значит «прав нет», а
+    // не «читать не удалось», и подменять его старым деревом было бы возвратом снятых прав.
+    return (data || []).map((r) => rowToRole(r, rulesErr ? null : (byRole.get(r.id) || [])))
   }
   const roles = await readJson(ROLES_FILE(), null)
   if (!Array.isArray(roles)) {
@@ -419,6 +578,7 @@ export async function createRole(input) {
   if (db) {
     const { insertWithOwner } = await import('./lib/ownerColumn.js')
     await insertWithOwner(db, 'roles', roleToRow(role))
+    await writeRoleRules(db, role)
     return role
   }
   roles.push(role)
@@ -457,6 +617,7 @@ export async function updateRole(id, patch = {}) {
     // читает его из БД, roleToRow кладёт обратно.
     const { updateWithOwner } = await import('./lib/ownerColumn.js')
     await updateWithOwner(db, 'roles', roleToRow(roles[i]), 'id', id)
+    await writeRoleRules(db, roles[i])
     return roles[i]
   }
   await writeJson(ROLES_FILE(), roles)

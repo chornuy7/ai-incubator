@@ -18,6 +18,7 @@
 import { dataPath, readJson, mutateJson } from './lib/jsonStore.js'
 import { getSupabase, supabaseEnabled } from './lib/supabase.js'
 import { tokenUsdForModel, currentModel } from './lib/modelPricing.js'
+import { moduleIdMaps } from './lib/moduleIds.js'
 
 function sb() { return supabaseEnabled() ? getSupabase() : null }
 
@@ -177,6 +178,86 @@ let _overridesCache = null // { data, ts }
 const OVERRIDES_TTL = 60_000
 export function invalidateOverrides() { _overridesCache = null }
 
+/*
+ * MR-290: три каталога вместо трёх json-ячеек.
+ *
+ * `price_overrides.modules`, `.coin_packs` и `.periods` — это КАТАЛОГИ, сложенные в
+ * ячейки одной строки. Пакет монет, период подписки, правка цены модуля — у каждой вещи
+ * свои поля и свои допустимые значения, и ни одно из них база не проверяла: скидка 500%,
+ * пакет на минус сто монет, правка цены у несуществующего модуля записались бы молча.
+ * Это ЦЕНЫ — то, по чему выставляют счета, и «молча» здесь стоит дороже всего.
+ *
+ * Наружу форма прежняя: `{modules, coinPacks, periods}`. Менять её заодно с формой
+ * хранения значило бы чинить две вещи одной правкой.
+ */
+const CATALOGS = [
+  { field: 'coinPacks', table: 'coin_packs', cols: ['coins', 'price', 'best'] },
+  { field: 'periods', table: 'subscription_periods', cols: ['unit', 'count', 'discount'] },
+]
+
+/** Каталоги из таблиц. Прочиталось — перекрывает json-ячейку, не прочиталось — молчим. */
+async function readCatalogs(db, o) {
+  for (const { field, table, cols } of CATALOGS) {
+    const { data, error } = await db.from(table).select(['position', ...cols].join(', ')).order('position', { ascending: true })
+    if (error) continue // таблицы ещё нет — остаётся то, что дала json-ячейка
+    // Пустая таблица — это «каталог пуст», а не «не прочитали»: перекрываем и её.
+    o[field] = (data || []).map((r) => Object.fromEntries(cols.map((c) => [c, r[c]])))
+  }
+  const { data: mods, error } = await db.from('module_price_overrides')
+    .select('module_id, month_price, action_price, gift_tokens')
+  if (error) return
+  const maps = await moduleIdMaps(db)
+  if (!maps) return
+  const modules = {}
+  for (const r of mods || []) {
+    const key = maps.byId.get(String(r.module_id))
+    if (!key) continue
+    const one = {}
+    if (r.month_price != null) one.month = Number(r.month_price)
+    if (r.action_price != null) one.action = Number(r.action_price)
+    if (r.gift_tokens != null) one.gift = Number(r.gift_tokens)
+    if (Object.keys(one).length) modules[key] = one
+  }
+  o.modules = modules
+}
+
+/** Переписать каталоги целиком: стор и так пишет строку целиком, сверять построчно незачем. */
+async function writeCatalogs(db, next) {
+  for (const { field, table, cols } of CATALOGS) {
+    const list = Array.isArray(next[field]) ? next[field] : null
+    if (!list) continue // поле не трогали — каталог не переписываем
+    const rows = list.map((v, i) => ({ position: i, ...Object.fromEntries(cols.map((c) => [c, v?.[c]])) }))
+    const { error: delErr } = await db.from(table).delete().gte('position', 0)
+    if (delErr) continue // таблицы нет — правка осталась в json-ячейке, она пока пишется
+    if (!rows.length) continue
+    const { error } = await db.from(table).upsert(rows, { onConflict: 'position' })
+    // Ограничение отвергло значение — это не мелочь: цену показали изменённой, а она
+    // не изменилась. Пусть правка упадёт с ошибкой, а не разойдётся с интерфейсом.
+    if (error) throw new Error(`[${table}] правка не сохранена: ${error.message}`)
+  }
+
+  if (!next.modules || typeof next.modules !== 'object') return
+  const maps = await moduleIdMaps(db)
+  if (!maps) return
+  const rows = []
+  for (const [key, v] of Object.entries(next.modules)) {
+    const id = maps.byKey.get(key)
+    if (id == null) continue // модуля нет в справочнике — править цену нечему
+    rows.push({
+      module_id: id,
+      month_price: v?.month ?? null,
+      action_price: v?.action ?? null,
+      gift_tokens: v?.gift ?? null,
+      updated_at: new Date().toISOString(),
+    })
+  }
+  const { error: delErr } = await db.from('module_price_overrides').delete().gt('module_id', 0)
+  if (delErr) return
+  if (!rows.length) return
+  const { error } = await db.from('module_price_overrides').upsert(rows, { onConflict: 'module_id' })
+  if (error) throw new Error(`[module_price_overrides] правка цен не сохранена: ${error.message}`)
+}
+
 /**
  * Сырые переопределения из БД/файла (или пусто).
  * @param {{fresh?: boolean}} [opts] fresh=true — мимо кэша, ОБЯЗАТЕЛЬНО при записи: setOverrides
@@ -190,6 +271,9 @@ export async function getOverrides(opts = {}) {
     if (!opts.fresh && _overridesCache && Date.now() - _overridesCache.ts < OVERRIDES_TTL) return _overridesCache.data
     const { data } = await db.from('price_overrides').select('*').eq('id', 'default').maybeSingle()
     const o = rowToOverrides(data)
+    // MR-290: каталоги — из своих таблиц; json-колонки остаются запасным путём на окно
+    // между накаткой миграции и выкатом кода.
+    await readCatalogs(db, o)
     _overridesCache = { data: o, ts: Date.now() }
     return o
   }
@@ -349,6 +433,8 @@ export async function setOverrides(patch = {}) {
     } else if (error) {
       throw new Error(error.message)
     }
+    // Каталоги — после строки: пока правка цен не сохранилась, писать её разбор незачем.
+    await writeCatalogs(db, next)
     invalidateOverrides() // правка записана — сбросить кэш, чтобы effectivePrices отдал свежее сразу
     return effectivePrices()
   }

@@ -2,30 +2,187 @@ import fs from 'fs/promises'
 import path from 'path'
 import { mutateJson } from './lib/jsonStore.js'
 import { getSupabase, supabaseEnabled } from './lib/supabase.js'
+import { decryptSecret, secretForStorage } from './lib/secretBox.js'
+import { withProxyStrings } from './lib/proxyLink.js'
 import { SESSIONS_DIR } from './config.js'
 
 function sbA() { return supabaseEnabled() ? getSupabase() : null }
-// Полный объект меты живёт в data-jsonb; индексируемые колонки — для запросов
-// (админка «проблемы»: бан/flood/без прокси).
-const metaToRow = (id, m) => ({
-  id, name: m.name || null, username: m.username || null, phone: m.phone || null,
-  status: m.status || null, country: m.country || null,
+
+/*
+ * MR-290: облачный пароль (2FA) больше не лежит в jsonb.
+ *
+ * Он уехал в отдельную колонку `two_fa_enc` и шифруется приложением
+ * (server/lib/secretBox.js). Причина не в красоте: `loadAllMeta` читает `data` целиком,
+ * и пока пароль был внутри, каждый список аккаунтов тянул 47 паролей открытым текстом
+ * через сеть и держал их в памяти процесса — при том, что нужен из них ровно один бит
+ * «пароль есть».
+ *
+ * Поэтому наружу из меты отдаётся только `has2fa`. Сам пароль достаётся ЯВНЫМ вызовом
+ * `getAccountTwoFa(id)` — так видно в коде, кто и зачем его берёт.
+ */
+const stripSecrets = (m) => { const { twoFA: _secret, ...rest } = m || {}; return rest }
+
+/**
+ * MR-290: карта «поле меты → колонка таблицы».
+ *
+ * Раньше вся мета лежала одним jsonb, а типизированные колонки рядом заполнялись «для
+ * запросов» и не читались никем: `loadAllMeta` брал только `data`. Из-за этого типы
+ * стояли, но не работали — `userId` хранился то числом, то строкой, девять моментов
+ * времени лежали числом epoch внутри json, а колонка владельца `user_id` с внешним ключом
+ * была ПУСТА на всех 63 строках, пока доступ резался по `data.ownerId`.
+ *
+ * Отображение объявлено списком, а не расписано вручную в двух функциях: две руками
+ * написанные таблицы соответствия однажды разойдутся, и поле начнёт теряться при
+ * сохранении. Тест сверяет этот список с миграцией.
+ *
+ * Типы: `text` | `ts` (в мете — epoch-мс, в базе — timestamptz) | `bool` (может быть
+ * неизвестен) | `flag` (всегда true/false) | `num`.
+ */
+const COLUMNS = [
+  ['name',            'name',              'text'],
+  ['username',        'username',          'text'],
+  ['phone',           'phone',             'text'],
+  ['status',          'status',            'text'],
+  ['country',         'country',           'text'],
+  // Прокси — ССЫЛКОЙ. Строка подключения (`meta.proxy`) производная: её собирают из
+  // строки каталога при чтении, а в базу она не попадает вовсе. Хранили и то, и другое —
+  // и связь потерялась: у 55 аккаунтов остался proxyId, а строка подключения обнулилась,
+  // из-за чего все они ходили в Telegram напрямую с адреса сервера (MR-290/MR-262).
+  ['proxyId',         'proxy_id',          'text'],
+  ['ownerId',         'user_id',           'text'],
+  ['inTrash',         'in_trash',          'flag'],
+  ['createdAt',       'created_at',        'ts'],
+  ['userId',          'tg_user_id',        'text'],
+  ['role',            'role',              'text'],
+  ['project',         'project',           'text'],
+  ['note',            'note',              'text'],
+  ['avatarColor',     'avatar_color',      'text'],
+  ['service',         'is_service',        'flag'],
+  ['platform',        'is_platform',       'flag'],
+  ['statusSince',     'status_since',      'ts'],
+  ['statusUntil',     'status_until',      'ts'],
+  ['statusReason',    'status_reason',     'text'],
+  ['statusCode',      'status_code',       'text'],
+  ['statusBy',        'status_by',         'text'],
+  ['prevStatus',      'prev_status',       'text'],
+  ['statusBefore',    'status_before',     'text'],
+  ['healthCheckedAt', 'health_checked_at', 'ts'],
+  ['healthError',     'health_error',      'text'],
+  ['lastValid',       'last_valid',        'bool'],
+  ['lastValidAt',     'last_valid_at',     'ts'],
+  ['lastCheckedAt',   'last_checked_at',   'ts'],
+  ['lastCheckOk',     'last_check_ok',     'bool'],
+  ['spamblock',       'spamblock',         'text'],
+  ['spamblockAt',     'spamblock_at',      'ts'],
+  ['spamblockText',   'spamblock_text',    'text'],
+  ['ggrScore',        'ggr_score',         'num'],
+]
+
+/*
+ * Те же поля ВРЕМЕННО остаются и в jsonb.
+ *
+ * Миграции применяются до выката кода: между ними на сервере работает предыдущая версия,
+ * которая читает мету из `data`. Перестань писать туда сразу — и на эти минуты у
+ * аккаунтов пропадут статусы, имена и владельцы. Дубль снимается ОДНОЙ СТРОКОЙ здесь,
+ * следующим релизом, вместе с миграцией, вычищающей ключи из `data`.
+ */
+const KEEP_LEGACY_JSON_KEYS = true
+
+/** Значение меты → значение колонки. `null` означает «пусто», а не «не трогать». */
+function toCol(v, type) {
+  if (type === 'flag') return !!v
+  if (v === undefined || v === null || v === '') return null
+  if (type === 'ts') { const t = Number(v); return Number.isFinite(t) && t > 0 ? new Date(t).toISOString() : null }
+  if (type === 'bool') return !!v
+  if (type === 'num') { const n = Number(v); return Number.isFinite(n) ? n : null }
+  return String(v)
+}
+
+/** Значение колонки → значение меты. `undefined` означает «в колонке пусто». */
+function fromCol(v, type) {
+  if (v === undefined || v === null) return undefined
+  if (type === 'ts') { const t = new Date(v).getTime(); return Number.isFinite(t) ? t : undefined }
+  if (type === 'bool' || type === 'flag') return !!v
+  if (type === 'num') { const n = Number(v); return Number.isFinite(n) ? n : undefined }
+  return String(v)
+}
+
+/**
+ * Строка таблицы из объекта меты.
+ * @param {string} id @param {object} m
+ * @param {string|null|undefined} twoFaEnc готовый шифротекст; undefined — не трогать колонку
+ */
+function metaToRow(id, m, twoFaEnc) {
+  const rest = stripSecrets({ ...m })
+  const row = { id }
+  for (const [json, col, type] of COLUMNS) {
+    row[col] = toCol(rest[json], type)
+    if (!KEEP_LEGACY_JSON_KEYS) delete rest[json]
+  }
+  // Производные значения в базу не едут: `has2fa` считается при чтении, а `proxy` —
+  // строка подключения, собранная из каталога. Записать её значит снова завести второй
+  // источник связи с прокси, который однажды разойдётся со ссылкой.
+  delete rest.has2fa
+  delete rest.proxy
   /*
-   * MR-262: у аккаунта — ССЫЛКА, и только она.
+   * Колонка `proxy` ПУСТЕЕТ, как только есть ссылка (MR-262).
    *
-   * Владелец 01.09: «чтобы с таблицы accounts_meta тянулись прокси с proxies, а не
-   * сохранялись прям там». Поэтому пока ссылка есть, колонка `proxy` пустая: строку
-   * подключения собирает каталог на чтении (`withProxyStrings`). Колонку не удаляем —
-   * в ней доживают аккаунты, которым прокси вписали руками, минуя каталог.
+   * Раньше здесь её просто не трогали, и прежняя строка подключения оставалась в базе
+   * навсегда. В окно выката её читает предыдущая версия — то есть показывает и использует
+   * прокси, который аккаунту уже не назначен. Колонка сносится следующим выпуском, но до
+   * тех пор обязана быть согласована со ссылкой.
    */
-  proxy: m.proxyId ? null : (m.proxy || null),
-  proxy_id: m.proxyId || null,
-  in_trash: !!m.inTrash, data: m, updated_at: new Date(m.updatedAt || Date.now()).toISOString(),
-})
+  row.proxy = m.proxyId ? null : (m.proxy || null)
+  row.data = rest
+  row.updated_at = new Date(m.updatedAt || Date.now()).toISOString()
+  if (twoFaEnc !== undefined) row.two_fa_enc = twoFaEnc
+  return row
+}
+
+/**
+ * Подставить строку подключения к прокси всем, у кого есть ссылка.
+ *
+ * Делается ОДНИМ проходом по каталогу на всю выборку, а не по запросу на аккаунт. Каталог
+ * прокси кэшируется на секунды в самом proxies.js, поэтому список аккаунтов (горячий путь)
+ * не превращается в сотню обращений.
+ *
+ * Импорт динамический: proxies.js — сосед по слою, и статическая ссылка отсюда завела бы
+ * цикл, как только каталогу понадобится что-то из меты.
+ * @param {Record<string, {proxyId?: string, proxy?: string}>} metas
+ */
+/**
+ * MR-262 (вобрано в MR-290): строка подключения — ПРОИЗВОДНАЯ, и хранить её нельзя.
+ *
+ * Здесь была своя сборка строки, и в ней была ошибка: у аккаунта, чей прокси удалили из
+ * каталога, строка обнулялась — то есть аккаунт молча уходил в Telegram напрямую с адреса
+ * сервера. Заметно такое только по банам. Помощник из MR-262 в этом случае оставляет
+ * прежнюю строку и ставит признак `proxyGone`, чтобы витрина сказала об этом словами.
+ *
+ * Он же применяется в ОБОИХ режимах, а не только в базе: в файловом аккаунт со ссылкой
+ * тоже должен получать строку подключения.
+ */
+function безПроизводной(meta) {
+  // Есть ключ — строки в записи нет: копия протухнет при первой же смене пароля в
+  // каталоге, а это ровно та болезнь, от которой уходим.
+  if (!meta || !meta.proxyId) return meta
+  const { proxy, ...остальное } = meta
+  void proxy
+  return остальное
+}
+
+/** Строка таблицы → объект меты. Колонка сильнее json: она теперь источник правды. */
+function rowToMeta(r) {
+  const m = stripSecrets({ ...(r.data || {}) })
+  for (const [json, col, type] of COLUMNS) {
+    const v = fromCol(r[col], type)
+    if (v !== undefined) m[json] = v
+  }
+  m.has2fa = !!(r.two_fa_enc || r.data?.twoFA)
+  return m
+}
 import { buildStatusPatch, normalizeStatus, nextStatusAfterExpiry, canModuleUseAccount } from './lib/accountStatus.js'
 import { appendAudit } from './lib/auditLog.js'
 import { getTrustCache } from './lib/trustCache.js'
-import { withProxyStrings } from './lib/proxyLink.js'
 
 // Боевые модули с реальными рискованными действиями — сюда не пускаем аккаунты с trust<40
 // (§6: авто-стоп → прогрев). Прогрев/парсинг/просмотр/автопостинг в своих каналах — не гейтим.
@@ -72,26 +229,48 @@ export async function loadAllMeta() {
   return withProxyStrings(await loadAllMetaRaw())
 }
 
-/**
- * Мета КАК ЗАПИСАНА, без пересборки строки прокси.
- *
- * Нужна там, где мету пишут: пересобранная строка — производная, и записывать её обратно
- * значило бы снова размножить копии по аккаунтам (MR-262).
- */
-export async function loadAllMetaRaw() {
+/** Мета как она лежит в хранилище — без собранных строк подключения. */
+async function loadAllMetaRaw() {
   const db = sbA()
   if (db) {
-    const { data } = await db.from('accounts_meta').select('id, data')
+    // `*` вместо `id, data`: мета теперь собирается из колонок, а не из одного jsonb.
+    // Пароль при этом НЕ расшифровывается — списку нужен один бит, а не 47 паролей в
+    // памяти (см. rowToMeta: наружу идёт только has2fa).
+    const { data } = await db.from('accounts_meta').select('*')
     const out = {}
-    for (const r of data || []) out[r.id] = r.data || {}
+    for (const r of data || []) out[r.id] = rowToMeta(r)
     return out
   }
   try {
     const raw = await fs.readFile(metaFile(), 'utf8')
-    return /** @type {Record<string, object>} */ (JSON.parse(raw))
+    const all = /** @type {Record<string, object>} */ (JSON.parse(raw))
+    // Файловый режим (тесты, локальный запуск) хранит пароль как раньше — там нет ни
+    // общей базы, ни бэкапов. Но наружу отдаём тот же признак, чтобы поведение совпадало.
+    for (const [id, m] of Object.entries(all || {})) all[id] = { ...stripSecrets(m), has2fa: !!m?.twoFA }
+    return all
   } catch {
     return {}
   }
+}
+
+/**
+ * Облачный пароль аккаунта — ЯВНЫМ вызовом и по одному.
+ *
+ * Отдельная функция, а не поле в мете: пароль нужен ровно там, где аккаунт
+ * реавторизуют, и каждый такой вызов должно быть видно в коде. Пока сессия жива, он не
+ * нужен вовсе — и не должен путешествовать вместе со списком аккаунтов.
+ * @param {string} accountId @returns {Promise<string|null>}
+ */
+export async function getAccountTwoFa(accountId) {
+  const db = sbA()
+  if (db) {
+    const { data } = await db.from('accounts_meta').select('two_fa_enc, data').eq('id', accountId).maybeSingle()
+    // До перешифровки значение может лежать ещё открытым текстом в data — decryptSecret
+    // такое возвращает как есть, поэтому обе дороги ведут в одно место.
+    return decryptSecret(data?.two_fa_enc ?? data?.data?.twoFA ?? null)
+  }
+  const all = await (async () => { try { return JSON.parse(await fs.readFile(metaFile(), 'utf8')) } catch { return {} } })()
+  return decryptSecret(all?.[accountId]?.twoFA ?? null)
 }
 
 /**
@@ -122,29 +301,31 @@ export async function getAccountMeta(accountId) {
  * файл ЦЕЛИКОМ. Последний писавший затирал чужие правки — так были потеряны прокси,
  * отпечатки и облачные пароли у 37 аккаунтов.
  */
-/**
- * MR-262: что реально ложится в хранилище.
- *
- * Строка подключения — ПРОИЗВОДНАЯ от каталога. Хранить её рядом со ссылкой значит снова
- * держать копию, которая протухнет при первой же смене пароля, — ровно та болезнь, от
- * которой уходим. Есть ключ — строки в записи нет.
- */
-function безПроизводной(meta) {
-  if (!meta || !meta.proxyId) return meta
-  const { proxy, ...остальное } = meta
-  void proxy
-  return остальное
-}
-
 export async function setAccountMeta(accountId, patch) {
   const db = sbA()
   if (db) {
-    const { data: row } = await db.from('accounts_meta').select('data').eq('id', accountId).maybeSingle()
-    const cur = row?.data || {}
-    const merged = безПроизводной({ ...DEFAULT_META, ...cur, ...patch, updatedAt: Date.now() })
+    // Читаем строку ЦЕЛИКОМ: мета собрана из колонок, и слияние по одному только `data`
+    // потеряло бы всё, что уже переехало (статус, владельца, даты).
+    const { data: row } = await db.from('accounts_meta').select('*').eq('id', accountId).maybeSingle()
+    const cur = row ? rowToMeta(row) : {}
+    const merged = безПроизводной({ ...DEFAULT_META, ...stripSecrets(cur), ...stripSecrets(patch), updatedAt: Date.now() })
     if (!merged.createdAt) merged.createdAt = Date.now()
-    await db.from('accounts_meta').upsert(metaToRow(accountId, merged), { onConflict: 'id' })
-    return merged
+    /*
+     * Секрет трогаем ТОЛЬКО когда он пришёл в patch.
+     *
+     * metaToRow собирает строку целиком, и если бы колонка попадала в неё всегда, то
+     * любое сохранение статуса затирало бы пароль пустым значением. Ровно так уже
+     * теряли пароли раньше (см. комментарий выше про read-modify-write), только тогда
+     * через файл. `undefined` означает «в запрос колонку не класть» — при upsert
+     * PostgREST не трогает то, чего в теле нет.
+     */
+    const twoFaEnc = patch && Object.hasOwn(patch, 'twoFA')
+      ? secretForStorage(patch.twoFA, true)
+      : undefined
+    await db.from('accounts_meta').upsert(metaToRow(accountId, merged, twoFaEnc), { onConflict: 'id' })
+    // Признак берём из уже прочитанной меты (`cur.has2fa`), а не из `cur.twoFA`: пароля в
+    // объекте меты больше нет, и обращение к нему молча вернуло бы undefined.
+    return { ...merged, has2fa: twoFaEnc === undefined ? !!cur.has2fa : !!twoFaEnc }
   }
   let result = null
   await mutateJson(metaFile(), (all) => {

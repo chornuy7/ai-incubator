@@ -4,7 +4,7 @@ import { useRef } from 'react'
 import { Modal, Select, Badge, Tip} from '@/shared/ui'
 import { cn } from '@/shared/lib/utils'
 import { browseDirs, scanFolder, runImport, proxyCapacity, pairPreview, uploadFolder, cleanupUpload, importCapabilities, collectDroppedEntries, type ScannedAccount, type ProxyMode, type ImportResultRow, type PairPoolItem } from '@/api/accountImportApi'
-import { fetchProxies, importProxies, toProxyUrl, isUsableProxy, type Proxy } from '@/api/proxiesApi'
+import { fetchProxies, importProxies, isUsableProxy, type Proxy } from '@/api/proxiesApi'
 import { useSession } from '@/features/auth/session'
 
 type Step = 'pick' | 'found' | 'proxy' | 'result'
@@ -157,7 +157,7 @@ export function ImportModal({ open, onClose, onImported }: { open: boolean; onCl
     setAdding(true); setErr(''); setAddReport('')
     try {
       const r = await importProxies({ text, probe: true })
-      const urls = r.created.map(toProxyUrl)
+      const urls = r.created.map((p) => p.id)
       setAddReport(
         `Добавлено ${r.created.length}: живых ${r.alive}` +
         (r.bad ? `, с неверной схемой ${r.bad}` : '') +
@@ -475,7 +475,7 @@ export function ImportModal({ open, onClose, onImported }: { open: boolean; onCl
                   value={singleProxy}
                   onChange={setSingleProxy}
                   placeholder="Выберите прокси"
-                  options={proxies.map((p) => ({ value: toProxyUrl(p), label: `${p.label || p.host}:${p.port}` }))}
+                  options={proxies.map((p) => ({ value: p.id, label: `${p.label || p.host}:${p.port}` }))}
                 />
               </div>
             )}

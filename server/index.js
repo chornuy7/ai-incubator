@@ -171,19 +171,29 @@ app.patch('/api/tg/accounts/:accountId', async (req, res) => {
   try {
     const patch = req.body ?? {}
     /*
-     * MR-262: прокси меняют ССЫЛКОЙ на каталог.
+     * MR-262 (доработано в MR-290): прокси меняют ССЫЛКОЙ на каталог.
      *
      * Витрина по-прежнему шлёт строку подключения — она её и показывает. Здесь строка
      * превращается в ключ: аккаунт должен ссылаться на запись каталога, а не хранить её
-     * копию. Не нашли в каталоге (ручной ввод, старая запись) — оставляем строку как есть,
-     * иначе правка прокси у одного аккаунта молча упала бы.
+     * копию.
+     *
+     * MR-262 оставлял строку как есть, если в каталоге её не нашлось. Мы вместо этого
+     * ЗАВОДИМ запись — владелец 01.09 просил именно так: «с любого места добавление идёт
+     * в БД». Иначе на аккаунте оседает прокси, которого нет в списке: его не проверить,
+     * не переназначить и не увидеть в «кем занят». Ровно так и появились 55 аккаунтов со
+     * ссылкой в никуда, из-за которых они ходили в Telegram с адреса сервера.
+     *
+     * Завести не удалось (строка не разбирается как адрес) — оставляем как было: правка
+     * прокси у одного аккаунта не должна падать целиком.
      */
     if (typeof patch.proxy === 'string' && patch.proxy !== '—' && patch.proxyId === undefined) {
-      const { listProxies } = await import('./proxies.js')
-      const { proxyPatch, findByUrl } = await import('./lib/proxyLink.js')
-      const запись = findByUrl(await listProxies().catch(() => []), patch.proxy)
-      // Нашли в каталоге — храним ссылку и чистим строку: подключение соберётся из каталога.
-      if (запись) Object.assign(patch, proxyPatch(запись), { proxy: '' })
+      const { ensureProxyByUrl } = await import('./proxies.js')
+      const { resolveSubscriptionOwner } = await import('./users.js')
+      const me = req.header('x-user-id')
+      const ownerId = me ? await resolveSubscriptionOwner(me).catch(() => '') : ''
+      const id = await ensureProxyByUrl(patch.proxy, ownerId).catch(() => null)
+      // Ссылка есть — строку чистим: подключение соберётся из каталога на чтении.
+      if (id) Object.assign(patch, { proxyId: id, proxy: '' })
     }
     // Снятие прокси убирает и ссылку: иначе она пережила бы «без прокси».
     if (patch.proxy === '—') patch.proxyId = ''
@@ -2455,11 +2465,27 @@ process.on('uncaughtException', (err) => {
   console.error('[fatal] необработанное исключение:', err?.stack || err)
 })
 
-const server = app.listen(PORT, HOST, () => {
+const server = app.listen(PORT, HOST, async () => {
   console.log(`API → http://${HOST}:${PORT}`)
   // Адрес живой документации печатаем при старте: иначе о ней узнают из README,
   // а README читают в последнюю очередь.
   if (docsEnabled()) console.log(`MCP docs → http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}${MCP_DOCS_PATH}`)
+  /*
+   * MR-290: ключ шифрования секретов проверяем ПРИ СТАРТЕ, а не при первой записи.
+   *
+   * Без ключа сохранение облачного пароля отказывает — и это правильно, класть его в
+   * общую базу открытым текстом нельзя. Но узнать об этом посреди импорта аккаунтов —
+   * худший момент: оператор уже выбрал архив и ждёт. Говорим сразу и один раз.
+   */
+  const { supabaseEnabled: sharedDb } = await import('./lib/supabase.js')
+  const { secretsKeyConfigured, secretsKeyId } = await import('./lib/secretBox.js')
+  if (!secretsKeyConfigured()) {
+    const where = sharedDb() ? 'ОБЩАЯ БАЗА' : 'локальное хранилище'
+    console.warn(`[secrets] SECRETS_KEY не задан (${where}). Облачные пароли аккаунтов ${sharedDb() ? 'НЕ БУДУТ СОХРАНЯТЬСЯ — импорт с паролем упадёт' : 'хранятся открытым текстом (допустимо только локально)'}.`)
+    console.warn('[secrets] Сгенерировать: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'base64\'))"')
+  } else {
+    console.log(`[secrets] ключ шифрования подключён (id ${secretsKeyId()})`)
+  }
 })
 // Занятый порт — единственная ошибка, при которой продолжать бессмысленно: обычно
 // это уже запущенный второй экземпляр. Говорим об этом человеческим языком.

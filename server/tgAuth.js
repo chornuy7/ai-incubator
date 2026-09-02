@@ -9,6 +9,8 @@ import { SESSIONS_DIR, API_ID, API_HASH, PENDING_TTL_MS } from './config.js'
 import { parseProxy, clientOptions } from './proxy.js'
 import { tcpPing } from './proxies.js'
 import { setAccountMeta, getAccountMeta, countryFromPhone, avatarColor } from './accountsMeta.js'
+import { getSupabase, supabaseEnabled, isMissingTable } from './lib/supabase.js'
+import { decryptSecret, secretForStorage } from './lib/secretBox.js'
 
 /** @typedef {{ client: TelegramClient, phone: string, phoneCodeHash: string, proxy?: string, accountId?: string, ownerId?: string, timer: NodeJS.Timeout }} PendingAuth */
 
@@ -23,18 +25,84 @@ function sessionFile(accountId) {
   return path.join(SESSIONS_DIR, `${accountId}.session`)
 }
 
+/*
+ * MR-290: сессия — самый сильный секрет системы.
+ *
+ * StringSession это уже пройденная авторизация: ей не нужен ни телефон, ни код, ни
+ * облачный пароль. Лежала она файлом открытым текстом — то есть копия каталога означала
+ * копию всех аккаунтов. Теперь сессия живёт в таблице `account_sessions` в шифрованном
+ * виде (ключ SECRETS_KEY в окружении, в базе его нет).
+ *
+ * Файл остаётся ЗАПАСНЫМ ПУТЁМ на время переезда: скрипт sessions-to-db.mjs переносит
+ * старые сессии, и до его запуска чтение обязано находить их на диске. Записывать в файл
+ * мы уже перестали — иначе появились бы два источника одной сессии.
+ */
+const SESSIONS_TABLE = 'account_sessions'
+function sessionsDb() { return supabaseEnabled() ? getSupabase() : null }
+
 /** Записать строку-сессию под accountId. Экспортируется для §2 (массовый импорт). */
 export async function saveSession(accountId, sessionString) {
+  const db = sessionsDb()
+  if (db) {
+    const { error } = await db.from(SESSIONS_TABLE).upsert({
+      account_id: accountId,
+      session_enc: secretForStorage(sessionString, true),
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'account_id' })
+    // Молчать нельзя: несохранённая сессия означает потерянный аккаунт — второй раз
+    // Telegram её не выдаст без повторного входа по коду.
+    if (error) throw new Error(`[${SESSIONS_TABLE}] сессия не сохранена: ${error.message}`)
+    return
+  }
   await ensureSessionsDir()
-  await fs.writeFile(sessionFile(accountId), sessionString, 'utf8')
+  await fs.writeFile(sessionFile(accountId), secretForStorage(sessionString, false), 'utf8')
 }
 
 export async function loadSessionString(accountId) {
+  const db = sessionsDb()
+  if (db) {
+    const { data, error } = await db.from(SESSIONS_TABLE).select('session_enc').eq('account_id', accountId).maybeSingle()
+    if (!error && data?.session_enc) return decryptSecret(data.session_enc) || ''
+    // Таблицы ещё нет или сессия не перенесена — ищем на диске, как раньше.
+  }
   try {
-    return await fs.readFile(sessionFile(accountId), 'utf8')
+    return decryptSecret(await fs.readFile(sessionFile(accountId), 'utf8')) || ''
   } catch {
     return ''
   }
+}
+
+/** Убрать сессию аккаунта отовсюду. Вызывается при удалении аккаунта. */
+export async function deleteSession(accountId) {
+  const db = sessionsDb()
+  if (db) {
+    const { error } = await db.from(SESSIONS_TABLE).delete().eq('account_id', accountId)
+    if (error && !isMissingTable(error)) throw new Error(`[${SESSIONS_TABLE}] сессия не удалена: ${error.message}`)
+  }
+  try { await fs.unlink(sessionFile(accountId)) } catch { /* файла и не было */ }
+}
+
+/**
+ * Идентификаторы аккаунтов, у которых есть сессия. Список аккаунтов строится по ним.
+ * На время переезда объединяем базу и диск: перенос ещё не прошёл, а показывать половину
+ * парка нельзя.
+ * @returns {Promise<string[]>}
+ */
+export async function listSessionIds() {
+  const ids = new Set()
+  const db = sessionsDb()
+  if (db) {
+    const { data, error } = await db.from(SESSIONS_TABLE).select('account_id')
+    if (error && !isMissingTable(error)) throw new Error(`[${SESSIONS_TABLE}] список сессий не прочитан: ${error.message}`)
+    for (const r of data || []) ids.add(r.account_id)
+  }
+  try {
+    await ensureSessionsDir()
+    for (const f of await fs.readdir(SESSIONS_DIR)) {
+      if (f.endsWith('.session')) ids.add(f.replace(/\.session$/, ''))
+    }
+  } catch { /* каталога нет — значит и файловых сессий нет */ }
+  return [...ids]
 }
 
 /** Новый id аккаунта. Экспортируется для §2 (массовый импорт). */

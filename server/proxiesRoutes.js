@@ -31,7 +31,7 @@ proxiesRouter.get('/', async (req, res) => {
       if (await loadSessionString(id)) realMeta[id] = m
     }))
     const usage = proxyUsageMap(realMeta)
-    res.json({ ok: true, proxies: proxies.map((p) => ({ ...p, usedBy: usage[toProxyUrl(p)]?.length || 0 })) })
+    res.json({ ok: true, proxies: proxies.map((p) => ({ ...p, usedBy: usage[p.id]?.length || 0 })) })
   } catch (err) { fail(res, err, 500) }
 })
 

@@ -20,6 +20,7 @@
 import { dataPath, readJson, mutateJson } from './lib/jsonStore.js'
 import { getSupabase, supabaseEnabled } from './lib/supabase.js'
 import { resolveWalletOwner, resolveSubscriptionOwner } from './users.js'
+import { readModuleLinks } from './lib/moduleIds.js'
 
 /**
  * §10.2: когда DATA_BACKEND=supabase, баланс/подписки/журнал живут в БД, а не в
@@ -170,16 +171,30 @@ const modeOf = (opts) => (opts?.mode === 'merge' ? 'merge' : 'replace')
  *  - объединение набора остаётся выше по коду (applyModules) — сюда приходит уже
  *    итоговый список.
  */
-const ALL_ROW = '*' // строка-метка «все модули»: админский провижининг ('all'), включая будущие
+/*
+ * Строка-метка «все модули» — УСТАРЕВШИЙ способ записи (MR-290).
+ *
+ * Строка user_subscriptions означает «у владельца есть модуль X». Строка со звёздочкой
+ * означала «есть все модули, включая будущие» — то есть свойство самой подписки,
+ * записанное в поле для имени модуля. Из-за неё на module_key нельзя было поставить
+ * внешний ключ на справочник модулей, а три места в коде вручную помнили про исключение.
+ *
+ * Теперь признак живёт в `subscriptions.all_modules`. Метка ещё читается: миграции
+ * применяются раньше выката кода, и в этом окне на сервере работает предыдущая версия,
+ * которая её пишет. Писать её мы уже перестали; оставшиеся строки уберёт отдельная
+ * миграция следующим релизом — вместе с внешним ключом на справочник.
+ */
+const ALL_ROW = '*'
 
 /**
  * Строки → состав подписки. Вынесено отдельно и без базы, потому что здесь три правила,
- * которые уже терялись при слияниях: метка «все модули», ОДНА дата на подписку и полный
+ * которые уже терялись при слияниях: признак «все модули», ОДНА дата на подписку и полный
  * состав вместе с истёкшим.
  * @param {{module_key:string, expires_at:string|number|null}[]} rows
+ * @param {boolean} [allModules] флаг подписки; строка-метка в rows — запасной путь
  * @returns {{modules:'all'|string[], expiresAt:number|null}}
  */
-export function rowsToModules(rows = []) {
+export function rowsToModules(rows = [], allModules = false) {
   // Дата одна на всю подписку; берём максимум — на случай, если строки разъехались.
   const expiresAt = rows.reduce((acc, r) => {
     const t = r?.expires_at ? ms(r.expires_at) : null
@@ -187,23 +202,55 @@ export function rowsToModules(rows = []) {
   }, null)
   // Истёкшие строки НЕ отбрасываем: просрочка должна выглядеть как «истекла, продлите»,
   // а не «ничего не куплено» — иначе в кабинете нечего продлевать.
-  if (rows.some((r) => r?.module_key === ALL_ROW)) return { modules: 'all', expiresAt }
+  if (allModules || rows.some((r) => r?.module_key === ALL_ROW)) return { modules: 'all', expiresAt }
   return { modules: rows.map((r) => r?.module_key).filter((k) => k && k !== ALL_ROW), expiresAt }
 }
 
-/** Прочитать состав строками. `null` — строк нет (читаем старое поле, переходный период). */
+/**
+ * Прочитать состав. `null` — сказать нечего: ни строк, ни признака «все модули».
+ *
+ * Признак читается ОТДЕЛЬНЫМ запросом к подписке, а не выводится из строк: у подписки
+ * «всё включено» своих строк состава не бывает вовсе, и по их отсутствию её не отличить
+ * от подписки, которой нет.
+ */
 async function readModuleRows(db, id) {
-  const { data, error } = await db.from('user_subscriptions').select('module_key, expires_at, updated_at').eq('user_id', id)
-  if (error || !data || !data.length) return null
+  const [rowsRes, subRes] = await Promise.all([
+    db.from('user_subscriptions').select('module_key, expires_at, updated_at').eq('user_id', id),
+    db.from('subscriptions').select('all_modules').eq('id', id).maybeSingle(),
+  ])
+  if (rowsRes.error) return null
+  // Колонки ещё нет (код уехал вперёд миграций) — работаем по строке-метке, как раньше.
+  const allModules = subRes.error ? false : subRes.data?.all_modules === true
+  const data = rowsRes.data || []
+  if (!allModules && !data.length) return null
   const touchedAt = data.reduce((acc, r) => Math.max(acc, r?.updated_at ? ms(r.updated_at) : 0), 0)
-  return { ...rowsToModules(data), touchedAt }
+  return { ...rowsToModules(data, allModules), touchedAt }
 }
 
-/** Записать ИТОГОВЫЙ состав строками: недостающие добавить, лишние убрать, дату — всем. */
+/** Записать ИТОГОВЫЙ состав: признак — на подписку, модули — строками. */
 async function writeModuleRows(db, id, list, expiresAt) {
-  const want = list === 'all' ? [ALL_ROW] : [...new Set((list || []).map(String).filter(Boolean))]
+  const all = list === 'all'
   const nowIso = new Date().toISOString()
   const expIso = iso(expiresAt)
+
+  /*
+   * Сначала признак — и обязательно с проверкой, что он КУДА-ТО записался.
+   *
+   * Две причины, по которым записать его может быть некуда: колонки ещё нет (код уехал
+   * вперёд миграций) или строки подписки ещё нет (её заводят выше по коду, и порядок
+   * когда-нибудь поменяют). В обоих случаях возвращаемся к старому способу и оставляем
+   * метку строкой. Иначе вышло бы худшее из возможного: метку стёрли, флаг записать
+   * некуда — и подписка «всё включено» молча превратилась бы в пустую.
+   *
+   * `.select('id')` здесь не для данных: без него update по несуществующей строке
+   * проходит без ошибки, и отличить «записал» от «не нашёл кого» было бы нечем.
+   */
+  const flagRes = await db.from('subscriptions').update({ all_modules: all }).eq('id', id).select('id')
+  const flagSaved = !flagRes.error && (flagRes.data || []).length > 0
+  const want = all
+    ? (flagSaved ? [] : [ALL_ROW])
+    : [...new Set((list || []).map(String).filter(Boolean))]
+
   const { data: have } = await db.from('user_subscriptions').select('module_key').eq('user_id', id)
   const gone = (have || []).map((r) => r.module_key).filter((k) => !want.includes(k))
   if (want.length) {
@@ -608,6 +655,9 @@ export async function changeCoins(amount, reason = '', userId, kind, modules) {
  */
 const WALLET_LOG = () => process.env.WALLET_LOG_FILE || dataPath('wallet-log.jsonl')
 
+/** Состав подписки для строк журнала: id записи → ключи модулей по порядку. */
+const modulesByLogEntry = (db, ids) => readModuleLinks(db, 'wallet_log_modules', 'log_id', ids)
+
 async function appendWalletEntry(entry) {
   const db = sb()
   if (db) {
@@ -642,6 +692,28 @@ async function appendWalletEntry(entry) {
      * тот минимум, который есть в схеме с самого начала.
      */
     const строка = { ...withActor, currency, kind, modules }
+
+    /*
+     * MR-290: строка журнала и состав подписки уезжают ОДНИМ вызовом (миграция
+     * 2026-09-02-mr290-arrays-to-links.sql). Через PostgREST это два запроса, и между
+     * ними процесс может умереть — в базе остаётся списание без основания. Для денег
+     * половинчатая запись хуже, чем отказ: сумма есть, объяснения нет.
+     *
+     * Функции ещё нет (миграция не доехала) — ниже прежний путь, он рабочий.
+     */
+    const { error: rpcErr } = await db.rpc('wallet_log_append', { entry: строка, module_keys: modules })
+    if (!rpcErr) return
+    if (!/function|schema cache|does not exist/i.test(rpcErr.message || '')) {
+      // Функция есть и отказала по существу — например, состав ссылается на модуль,
+      // которого нет в справочнике. Повторять то же самое обычной вставкой значило бы
+      // обойти проверку, ради которой всё и делалось.
+      // Вызывающий глушит ошибки журнала намеренно («потерянная строка досадна,
+      // потерянное списание — деньги»), поэтому отказ ещё и печатаем: иначе он
+      // растворится совсем.
+      console.warn('[wallet_log] запись журнала отклонена:', rpcErr.message)
+      throw new Error(`[wallet_log] запись журнала отклонена: ${rpcErr.message}`)
+    }
+
     for (const колонка of ['modules', 'actor_id', 'kind', 'currency']) {
       const { error } = await db.from('wallet_log').insert(строка)
       if (!error) return
@@ -712,18 +784,25 @@ export async function walletHistory(filter = {}) {
       return q
     }
     // Состав подписки (миграция 2026-08-31) — им интерфейс разворачивает «и ещё 11».
-    let { data, error } = await build('ts, user_id, actor_id, amount, before_val, after_val, reason, currency, modules')
-    if (error && /modules/i.test(error.message || '')) ({ data, error } = await build('ts, user_id, actor_id, amount, before_val, after_val, reason, currency'))
+    // id тянем всегда: по нему подбирается состав подписки из таблицы связей.
+    let { data, error } = await build('id, ts, user_id, actor_id, amount, before_val, after_val, reason, currency, modules')
+    if (error && /modules/i.test(error.message || '')) ({ data, error } = await build('id, ts, user_id, actor_id, amount, before_val, after_val, reason, currency'))
     // Колонки актора может ещё не быть (миграция 2026-08-27) — тогда читаем без неё.
-    if (error && /actor_id/i.test(error.message || '')) ({ data, error } = await build('ts, user_id, amount, before_val, after_val, reason, currency'))
-    if (error && /currency/i.test(error.message || '')) ({ data } = await build('ts, user_id, amount, before_val, after_val, reason'))
-    return (data || []).map((r) => ({
-      ts: ms(r.ts), userId: r.user_id, actorId: r.actor_id || r.user_id, amount: Number(r.amount),
-      before: r.before_val == null ? null : Number(r.before_val),
-      after: r.after_val == null ? null : Number(r.after_val), reason: r.reason || '',
-      currency: r.currency === 'usd' ? 'usd' : 'coins',
-      ...(Array.isArray(r.modules) && r.modules.length ? { modules: r.modules } : {}),
-    }))
+    if (error && /actor_id/i.test(error.message || '')) ({ data, error } = await build('id, ts, user_id, amount, before_val, after_val, reason, currency'))
+    if (error && /currency/i.test(error.message || '')) ({ data } = await build('id, ts, user_id, amount, before_val, after_val, reason'))
+    // MR-290: состав подписки — из wallet_log_modules; колонка modules остаётся
+    // запасным путём на окно между накаткой миграции и выкатом кода.
+    const составы = await modulesByLogEntry(db, (data || []).map((r) => r.id).filter((v) => v != null))
+    return (data || []).map((r) => {
+      const modules = составы?.get(String(r.id)) ?? (Array.isArray(r.modules) ? r.modules : [])
+      return {
+        ts: ms(r.ts), userId: r.user_id, actorId: r.actor_id || r.user_id, amount: Number(r.amount),
+        before: r.before_val == null ? null : Number(r.before_val),
+        after: r.after_val == null ? null : Number(r.after_val), reason: r.reason || '',
+        currency: r.currency === 'usd' ? 'usd' : 'coins',
+        ...(modules.length ? { modules } : {}),
+      }
+    })
   }
   const fs = await import('node:fs/promises')
   let raw = ''

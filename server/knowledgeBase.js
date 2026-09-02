@@ -11,6 +11,7 @@
 import crypto from 'crypto'
 import { dataPath, readJson, writeJson } from './lib/jsonStore.js'
 import { getSupabase, supabaseEnabled } from './lib/supabase.js'
+import { toDbTime, fromDbTime } from './lib/dbTime.js'
 
 /**
  * Путь считаем ЛЕНИВО, при каждом обращении: тест, выставивший KB_FILE после того, как
@@ -33,8 +34,8 @@ const fromRow = (r) => ({
   url: r.url ?? null,
   scope: r.scope || 'all',
   version: Number(r.version) || 1,
-  createdAt: Number(r.created_at) || 0,
-  updatedAt: Number(r.updated_at) || 0,
+  createdAt: fromDbTime(r.created_at),
+  updatedAt: fromDbTime(r.updated_at),
 })
 
 const toRow = (k) => ({
@@ -47,8 +48,8 @@ const toRow = (k) => ({
   url: k.url ?? null,
   scope: k.scope || 'all',
   version: Number(k.version) || 1,
-  created_at: Number(k.createdAt) || Date.now(),
-  updated_at: Number(k.updatedAt) || Date.now(),
+  created_at: toDbTime(k.createdAt) || new Date().toISOString(),
+  updated_at: toDbTime(k.updatedAt) || new Date().toISOString(),
 })
 
 /** @param {object} input */

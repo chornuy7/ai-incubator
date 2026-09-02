@@ -16,6 +16,7 @@
  * запуск и тесты работают без базы.
  */
 import { getSupabase, supabaseEnabled } from './lib/supabase.js'
+import { toDbTime, fromDbTime } from './lib/dbTime.js'
 
 function sb() { return supabaseEnabled() ? getSupabase() : null }
 
@@ -24,7 +25,7 @@ const fromRow = (r) => ({
   id: r.id,
   name: r.name,
   settings: r.settings ?? {},
-  createdAt: Number(r.created_at) || 0,
+  createdAt: fromDbTime(r.created_at),
   ...(r.user_id ? { userId: r.user_id } : {}),
   // MR-196: автор — человек. `user_id` рядом — это пространство, у админа и его
   // сотрудника оно одно, и различить их по нему нельзя.
@@ -43,7 +44,7 @@ const toRow = (moduleKey, p) => ({
   color: p.color ? String(p.color).slice(0, 20) : null,
   owner_label: p.owner ? String(p.owner).slice(0, 40) : null,
   settings: p.settings ?? {},
-  created_at: Number(p.createdAt) || Date.now(),
+  created_at: toDbTime(p.createdAt) || new Date().toISOString(),
 })
 
 /**

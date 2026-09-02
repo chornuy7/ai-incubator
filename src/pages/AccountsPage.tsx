@@ -32,7 +32,7 @@ import type { AccountStatus, TgAccount } from '@/shared/types'
 import { patchAccount, releaseAccountLock, setAccountStatusManual, fetchDailyAll, type DailyAllMap } from '@/api/accountsApi'
 import { fetchCampaigns, updateCampaign, type Campaign, type PinnedMap } from '@/api/campaignsApi'
 import { fetchAccountGroups, type AccountGroup } from '@/api/accountGroupsApi'
-import { fetchProxies, toProxyUrl, isUsableProxy, type Proxy as ApiProxy } from '@/api/proxiesApi'
+import { fetchProxies, isUsableProxy, type Proxy as ApiProxy } from '@/api/proxiesApi'
 import { assignProxies, proxyCapacity } from '@/api/accountImportApi'
 import { fetchActivity, setActivity, type ActivityMap, type SchedulePercent } from '@/api/accountActivityApi'
 import { startUnblock } from '@/api/accountActivityApi'
@@ -1111,7 +1111,7 @@ function AssignProxyModal({ open, ids, onClose, onDone, onError }: {
           <Select
             value={single}
             onChange={setSingle}
-            options={proxies.map((p) => ({ value: toProxyUrl(p), label: `${p.label || p.host}:${p.port}` }))}
+            options={proxies.map((p) => ({ value: p.id, label: `${p.label || p.host}:${p.port}` }))}
           />
           <p className="mt-2 text-xs text-amber-300/80">
             Вся пачка выйдет с одного IP — Telegram видит такую группу и банит волной.

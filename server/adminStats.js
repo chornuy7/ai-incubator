@@ -16,6 +16,7 @@ import { moduleTitle } from './lib/moduleTitles.js'
 import { loadAllMeta } from './accountsMeta.js'
 import { listActivity } from './accountActivity.js'
 import { readAudit } from './lib/auditLog.js'
+import { fromDbTime } from './lib/dbTime.js'
 import { listUsers } from './users.js'
 import { listRoles } from './roles.js'
 import { normalizeStatus } from './lib/accountStatus.js'
@@ -954,7 +955,11 @@ export async function purchasesReport(opts = {}) {
   const planFeed = []
   let planTotal = 0
   for (const e of auditRows) {
-    const ts = Number(e.ts) || 0
+    // `readAudit` отдаёт время СТРОКОЙ ISO (см. rowToEntry), и `Number('2026-08-11T…')`
+    // это NaN. Стояло `Number(e.ts) || 0` — из-за этого КАЖДАЯ покупка плана получала
+    // время 0, отсекалась строкой ниже, и раздел «планы» в отчёте по деньгам всегда был
+    // пуст. Тот же самый промах уже чинили в payments.js; здесь он дожил до MR-290.
+    const ts = fromDbTime(e.ts)
     if (since && ts < since) continue
     const sum = Number(e.meta?.paid ?? e.meta?.cost?.sum) || 0
     if (sum <= 0) continue // 'all'/пустой набор — не покупка
