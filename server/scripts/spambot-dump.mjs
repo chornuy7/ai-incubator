@@ -23,6 +23,8 @@ import { loadSessionString, createClient } from '../tgAuth.js'
 import { accountFingerprint } from '../lib/deviceFingerprint.js'
 import { getAccountMeta } from '../accountsMeta.js'
 import { accountProxyUrl } from '../proxies.js'
+// Выбор кнопки берём из боевого модуля — дамп обязан повторять продакшен, а не свою догадку.
+import { appealButton } from '../lib/spamAppeal.js'
 
 const accountId = process.argv[2]
 if (!accountId) { console.error('Укажите accountId'); process.exit(1) }
@@ -79,20 +81,23 @@ for (; шаг < 6; шаг++) {
   console.log('\n============ ШАГ', шаг, '· последних сообщений:', msgs.length, '============')
   msgs.forEach((m, i) => печать(`сообщение -${i}`, m))
 
-  // Кнопку выбираем ТАК ЖЕ, как боевой модуль: первая не-запретная в последнем сообщении бота.
+  /*
+   * Кнопку выбирает БОЕВАЯ функция, а не своя упрощённая. Первая версия скрипта брала
+   * «первую не-запретную» и на живом прогоне нажала «I was wrong, please release me» —
+   * путь признания вины, на который бот отвечает жёстким отказом. Боевой модуль так не
+   * делает: у него «This is a mistake» стоит первым в приоритетах. Дамп обязан повторять
+   * продакшен, иначе он показывает поведение, которого в проде нет.
+   */
   const бот = msgs.find((m) => !m.out)
-  const все = кнопки(бот)
-  if (!все.length) { console.log('\n>>> кнопок нет — дальше идти некуда'); break }
-  const жать = все.find((b) => !/^(ok|ок|what is spam\??|что такое спам\??)$/i.test(String(b.text || '').trim()))
-  if (!жать) { console.log('\n>>> все кнопки из запретных — не жмём'); break }
-
-  console.log('\n>>> ЖМЁМ:', JSON.stringify(жать.text), '| через:', жать.data ? 'callback' : 'отправку текста')
-  const btn = (бот.replyMarkup?.rows || []).flatMap((r) => r.buttons || []).find((b) => b?.text === жать.text)
+  if (!бот) { console.log('\n>>> ответа бота нет — дальше идти некуда'); break }
+  const btn = appealButton(бот, String(бот.message || ''))
+  if (!btn) { console.log('\n>>> боевая логика кнопку не выбрала — дальше идти некуда'); break }
+  console.log('\n>>> ЖМЁМ:', JSON.stringify(btn.text), '| через:', btn.data ? 'callback' : 'отправку текста')
   if (btn?.data) {
     const { Api } = await import('telegram')
     await client.invoke(new Api.messages.GetBotCallbackAnswer({ peer: bot, msgId: бот.id, data: btn.data }))
   } else {
-    await client.sendMessage(bot, { message: String(жать.text) })
+    await client.sendMessage(bot, { message: String(btn.text) })
   }
   await sleep(ПАУЗА)
 }

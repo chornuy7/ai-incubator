@@ -78,6 +78,17 @@ function loneButton(msg) {
   return b
 }
 
+/**
+ * Подпись экрана: текст плюс набор кнопок. По ней узнаём ПОВТОР — бот прислал ровно то же
+ * самое, что и до нажатия. Сравниваем структуру, а не смысл: работает на любом языке.
+ * @param {object} msg
+ */
+function подписьЭкрана(msg) {
+  const кнопки = []
+  for (const row of msg?.replyMarkup?.rows || []) for (const b of (row.buttons || [])) кнопки.push(String(b?.text || ''))
+  return `${String(msg?.message || '').trim()}|${кнопки.join('§')}`
+}
+
 /** Бот просит описать проблему словами. */
 const ASKS_TEXT = /describe|tell us|напиши|опиши|в двух словах|what happened|расскажи/i
 /** Жалоба принята. */
@@ -92,7 +103,7 @@ const SUBMITTED = /thank you|thanks|received|submitted|has been sent|перед�
  * кнопки с `data`, поэтому не находил НИ ОДНОЙ: модуль честно писал «ограничение
  * осталось», ни разу при этом не пожаловавшись. Жмём такую кнопку отправкой её текста.
  */
-function appealButton(msg, text = '') {
+export function appealButton(msg, text = '') {
   const rows = msg?.replyMarkup?.rows || []
   const all = []
   for (const row of rows) for (const b of (row.buttons || [])) {
@@ -168,6 +179,22 @@ export async function appealSpamblock(client, opts = {}) {
     if (CLEAN.test(text)) return { state: 'clean', text: cut(text), appealed: false }
 
     let appealed = false
+    /*
+     * MR-297: экран, который НЕ МЕНЯЕТСЯ после нажатия, — тупик, а не шаг.
+     *
+     * Дамп живого диалога 02.09 (аккаунт smurfs Richardson) показал это дословно: после
+     * «No! Never did that!» приходит «Please verify you are a human.» с единственной
+     * кнопкой «Done»; отправляем «Done» — и получаем ТОТ ЖЕ экран. Трижды подряд, девять
+     * одинаковых сообщений в диалоге.
+     *
+     * Значит анти-бот проверка на последнем шаге ЕСТЬ, и текстовым нажатием она не
+     * проходится: Telegram её для того и поставил. Первоначальная постановка MR-192 была
+     * права («человеку остаётся только „я не робот“»), а моя правка 01.09 — нет.
+     *
+     * Сравниваем ПОДПИСЬ экрана, а не слова: правило работает и на португальском, и на
+     * персидском, которые уже приходили с прода.
+     */
+    let прежняя = ''
     // Диалог @SpamBot длиннее, чем казалось: «This is a mistake» → «Would you like to
     // submit a complaint?» → «Did you ever do any of this?» → и только потом приём жалобы
     // (замерено живьём 22.08). На трёх шагах мы обрывались на середине. Шесть — с запасом,
@@ -180,11 +207,18 @@ export async function appealSpamblock(client, opts = {}) {
       if (realCaptcha(msg)) return { state: 'captcha', text: cut(text), appealed }
       const btn = appealButton(msg, text)
       if (btn && msg?.id) {
+        прежняя = подписьЭкрана(msg)
         await pressButton(client, bot, msg, btn)
         appealed = true
         await sleep(wait)
         msg = (await client.getMessages(bot, { limit: 1 }))?.[0]
         text = msg?.message || ''
+        /*
+         * Тот же экран после нажатия — дальше нас не пускают. Это и есть проверка «я не
+         * робот»: жалоба заполнена, но до модераторов не уйдёт, пока человек не подтвердит
+         * её руками с телефона или десктопа под этим аккаунтом.
+         */
+        if (подписьЭкрана(msg) === прежняя) return { state: 'captcha', text: cut(text), appealed: true }
         if (CLEAN.test(text)) return { state: 'clean', text: cut(text), appealed: true }
         if (SUBMITTED.test(text)) return { state: 'appealed', text: cut(text), appealed: true }
         if (realCaptcha(msg)) return { state: 'captcha', text: cut(text), appealed: true }
