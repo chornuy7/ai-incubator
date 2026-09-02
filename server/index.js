@@ -2558,6 +2558,14 @@ process.on('uncaughtException', (err) => {
 
 const server = app.listen(PORT, HOST, async () => {
   console.log(`API → http://${HOST}:${PORT}`)
+  /*
+   * Живой канал панели. Поднимается поверх того же сервера и слушает /api/live: сервер
+   * сам сообщает об изменении баланса и о новых сообщениях поддержки, вместо того чтобы
+   * панель спрашивала об этом по таймеру.
+   */
+  const { attachLiveChannel } = await import('./lib/liveChannel.js')
+  attachLiveChannel(server)
+  console.log(`Живой канал → ws://${HOST}:${PORT}/api/live`)
   // Адрес живой документации печатаем при старте: иначе о ней узнают из README,
   // а README читают в последнюю очередь.
   if (docsEnabled()) console.log(`MCP docs → http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}${MCP_DOCS_PATH}`)

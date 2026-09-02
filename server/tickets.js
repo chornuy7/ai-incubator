@@ -304,11 +304,13 @@ export async function createTicket({ userId = '', author = null, subject = '', c
       const { error: mErr } = await db.from('ticket_messages').insert(ticket.messages.map((m) => msgToRow(ticket.id, m)))
       if (mErr && !isMissingTable(mErr)) throw new Error(`Не удалось сохранить обращение: ${mErr.message}`)
     }
+    void сказатьПроОбращение(ticket)
     return ticket
   }
   const tickets = await readTickets()
   tickets.push(ticket)
   await writeJson(ticketsFile(), tickets)
+  void сказатьПроОбращение(ticket)
   return ticket
 }
 
@@ -337,6 +339,21 @@ export async function markRead(id, side) {
  * Добавить сообщение в тикет. Ответ поддержки переводит открытый/ожидающий тикет
  * в «в работе»; ответ клиента по закрытому — снова открывает (переписка продолжилась).
  */
+/**
+ * Сказать участникам обращения, что в нём что-то произошло.
+ *
+ * Кому: автору и адресату (владельцу пространства либо поддержке). Событие не несёт
+ * текста — панель забирает переписку обычной ручкой, с той же проверкой доступа.
+ *
+ * @param {object} ticket
+ */
+async function сказатьПроОбращение(ticket) {
+  try {
+    const { notifyUsers } = await import('./lib/liveChannel.js')
+    notifyUsers([ticket?.userId, ticket?.toOwnerId], 'support', { ticketId: ticket?.id })
+  } catch { /* канал не поднят (тесты) — молча живём без него */ }
+}
+
 export async function addMessage(id, { from = 'user', author = null, text = '' }) {
   const t = String(text || '').trim()
   if (!t) throw new Error('Пустое сообщение')
@@ -363,12 +380,14 @@ export async function addMessage(id, { from = 'user', author = null, text = '' }
       status: ticket.status,
       [side === 'support' ? 'read_support' : 'read_user']: now,
     })
+    void сказатьПроОбращение(ticket)
     return ticket
   }
   const tickets = await readTickets()
   const idx = tickets.findIndex((x) => x.id === id)
   tickets[idx] = ticket
   await writeJson(ticketsFile(), tickets)
+  void сказатьПроОбращение(ticket)
   return ticket
 }
 

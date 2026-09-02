@@ -10,6 +10,7 @@ import {
   fetchAccountsSummary, fetchBrokenAccounts,
   type AccountsFacets, type BrokenGroup,
 } from '@/api/accountsApi'
+import { onLive, liveConnected } from '@/shared/lib/liveSocket'
 
 /** Статусы, при которых аккаунт работать не может. Тот же набор, что и на сервере. */
 const НЕ_В_СТРОЮ = new Set(['reauth', 'invalid', 'spamblock', 'quarantine', 'frozen'])
@@ -164,13 +165,32 @@ export function AppHeader() {
       void fetchAwaitingReplies().then((a) => { if (alive) setAwaiting(a) }).catch(() => {})
     }
     pull()
-    // Колокольчик — фон, а не рабочий инструмент: раз в минуту достаточно, и на скрытой
-    // вкладке молчим. Раньше это были 4 запроса каждые 30с на ЛЮБОЙ странице.
+
+    /*
+     * Поддержка и кошелёк приходят СОБЫТИЕМ, а не опросом.
+     *
+     * Сервер сообщает «в обращении что-то произошло» и «кошелёк изменился» — панель по
+     * этому поводу перечитывает нужное. Опрос остаётся редким запасным заходом: канал
+     * может быть не поднят (старая версия сервера), оборваться на спящем ноутбуке или
+     * не пройти через чужой корпоративный прокси. Раз в пять минут вместо раза в минуту
+     * — этого хватает, чтобы данные не «застыли», и это в пять раз меньше запросов.
+     */
+    const отписки = [
+      onLive('support', () => {
+        void fetchTickets().then((t) => { if (alive) setTickets(t) }).catch(() => {})
+      }),
+      onLive('balance', () => {
+        void fetchWalletHistory(20).then((w) => { if (alive) setWallet(w) }).catch(() => {})
+      }),
+    ]
+
     const iv = setInterval(() => {
       if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
+      // Канал жив — сервер уже сказал бы. Ходим только когда его нет.
+      if (liveConnected()) return
       pull()
-    }, 60000)
-    return () => { alive = false; clearInterval(iv) }
+    }, 300000)
+    return () => { alive = false; clearInterval(iv); for (const off of отписки) off() }
   }, [])
   // MR-134: колокольчик по статусу задачи — ошибка, пауза И завершение (по ТЗ 10.08).
   // «Завершена» показываем только НЕДАВНО законченные (updatedAt за 12ч), иначе старые
