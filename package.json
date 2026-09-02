@@ -10,7 +10,7 @@
   "scripts": {
     "gen-pricing": "node scripts/gen-pricing-doc.mjs",
     "sync": "node scripts/sync.mjs",
-    "dev": "concurrently -n web,api -c blue,green \"vite\" \"node server/index.js\"",
+    "dev": "concurrently -n web,api -c blue,green \"vite\" \"node scripts/dev-api.mjs\"",
     "dev:safe": "concurrently -n web,api -c blue,green \"vite\" \"node scripts/dev-api-safe.mjs\"",
     "dev:web": "vite",
     "dev:api": "node server/index.js",
