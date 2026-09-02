@@ -26,6 +26,7 @@ export interface ApiAccount {
   trust: null | { score: number; band: string | null }
   risk?: TgAccount['risk']
   limit?: TgAccount['limit']
+  appeal?: null | { state: string; at: string | null }
   geo?: TgAccount['geo']
   busy: null | { taskId: string; modules: { key: string; label: string }[] }
   origin: { code: string | null; params: Record<string, unknown> }
@@ -91,6 +92,7 @@ export function toTgAccount(a: ApiAccount): ServerAccount {
     noProxy: !a.proxy,
     risk: a.risk,
     limit: a.limit,
+    appeal: a.appeal ? { state: a.appeal.state as NonNullable<TgAccount['appeal']>['state'], at: a.appeal.at ? Date.parse(a.appeal.at) : null } : null,
     geo: a.geo ?? null,
     trustScore: a.trust?.score,
     trustBand: a.trust?.band as TgAccount['trustBand'],

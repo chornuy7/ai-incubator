@@ -182,6 +182,11 @@ export function rowToAccount(r, extra = {}) {
     trust,
     // Вид ограничения и что с ним делать — словами оператора, не кодом статуса.
     limit: ограничение,
+    /*
+     * MR-297: подача жалобы через @SpamBot. Нужна и в списке, и в карточке: без неё
+     * непонятно, кого уже трогали, и жалоба уходит по второму разу вслепую.
+     */
+    appeal: r.appeal_state ? { state: r.appeal_state, at: iso(r.appeal_at) } : null,
     geo: гео,
     risk: computeAccountRisk({
       status,

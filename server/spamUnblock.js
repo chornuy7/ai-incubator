@@ -62,10 +62,30 @@ async function appealOne(accountId, taskId, shouldStop) {
     client = await createClient(sessionStr, await accountProxyUrl(meta), accountFingerprint(accountId, meta))
     const res = await appealSpamblock(client)
     try { await client.disconnect() } catch { /* ignore */ }
+    /*
+     * MR-297: помним ПОДАЧУ жалобы, а не только её результат.
+     *
+     * Раньше при «жалоба подана» аккаунту не писалось ничего — факт жил только в журнале
+     * задачи. Закрыли задачу, и уже не сказать, у кого обращение висит, а кого не трогали;
+     * при трёх десятках спамблоков это подача по второму разу вслепую, а частые обращения
+     * антиспам считает поведением.
+     *
+     * `appealAt` ставим по факту НАЖАТИЙ (`res.appealed`), а не по успеху: диалог, брошенный
+     * на полпути, — тоже след, и повторять его сразу же не стоит.
+     */
+    if (res.appealed) {
+      await setAccountMeta(accountId, {
+        appealAt: Date.now(),
+        // 'sent' — жалоба принята ботом, 'stalled' — нажали, но подтверждения не дождались.
+        appealState: res.state === 'appealed' ? 'sent' : res.state === 'clean' ? 'cleared' : res.state,
+      }).catch(() => {})
+    }
     if (res.state === 'clean') {
       try {
         await setAccountStatus(accountId, 'active', { code: '', reason: 'Спамблок снят через @SpamBot', initiator: 'system' })
       } catch { await setAccountMeta(accountId, { status: 'active', statusReason: 'Спамблок снят через @SpamBot' }).catch(() => {}) }
+      // Снялось — обращение закрыто, висеть ему больше незачем.
+      await setAccountMeta(accountId, { appealState: 'cleared' }).catch(() => {})
     }
     return { name, state: res.state, text: res.text, appealed: res.appealed }
   } catch (e) {

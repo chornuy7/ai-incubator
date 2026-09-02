@@ -87,6 +87,12 @@ const COLUMNS = [
   ['spamblock',       'spamblock',         'text'],
   ['spamblockAt',     'spamblock_at',      'ts'],
   ['spamblockText',   'spamblock_text',    'text'],
+  /*
+   * MR-297: когда подали жалобу через @SpamBot и чем она пока кончилась. Факт подачи жил
+   * только в журнале задачи — закрыли задачу, и уже не сказать, у кого обращение висит.
+   */
+  ['appealAt',        'appeal_at',         'ts'],
+  ['appealState',     'appeal_state',      'text'],
   ['ggrScore',        'ggr_score',         'num'],
 ]
 

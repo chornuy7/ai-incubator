@@ -290,6 +290,29 @@ export function HeroBanner({ account, stats, actions }: {
         апелляцией, бан платформы не снимается вовсе. Раньше все три выглядели одинаково,
         и оператор ждал снятия у аккаунта, которого уже нет.
       */}
+      {/*
+        MR-297: жалоба через @SpamBot — когда подали и чем пока кончилась.
+        Владелец 02.09 просил статус «подана, ждём»: без него непонятно, кого уже трогали,
+        и обращение уходит по второму разу вслепую, а частые обращения антиспам считает
+        поведением. Стоит НАД видом ограничения: это свежий факт про этот аккаунт.
+      */}
+      {account.appeal?.at && account.appeal.state !== 'cleared' && (
+        <div className="mt-4 flex items-start gap-2 rounded-xl border border-amber-300/40 bg-amber-500/15 px-3 py-2.5 text-xs leading-relaxed text-amber-50">
+          <Clock size={13} className="mt-0.5 shrink-0" />
+          <div>
+            <div className="font-bold">
+              {account.appeal.state === 'sent' ? 'Жалоба подана — ждём модерацию' : 'Диалог с @SpamBot не завершён'}
+            </div>
+            <div className="opacity-90">{fmtDate(account.appeal.at)}</div>
+            <div className="opacity-75">
+              {account.appeal.state === 'sent'
+                ? 'Срока рассмотрения Telegram не называет. Узнать решение можно только повторной проверкой — она идёт по графику; снимут ограничение, и аккаунт вернётся в строй сам.'
+                : 'Жалоба не подтверждена ботом. Стоит повторить: до подтверждения обращение до модераторов не дошло.'}
+            </div>
+          </div>
+        </div>
+      )}
+
       {лимит ? (
         <div className={cn(
           'mt-4 space-y-1 rounded-xl border px-3 py-2.5 text-xs leading-relaxed',
