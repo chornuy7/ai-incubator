@@ -108,6 +108,8 @@ export function SupportPage() {
         .catch(() => { /* сеть моргнула — покажем на следующем тике */ })
     }
     const off = onLive('support', подтянуть)
+    // Канал сообщает о новых сообщениях; запасной заход нужен, если канала нет. Открытая
+    // переписка уже загружена, поэтому «нечего показывать» здесь не бывает.
     const iv = setInterval(() => { if (!liveConnected()) подтянуть() }, 30000)
     return () => { off(); clearInterval(iv) }
   }, [openId, isSupportView])

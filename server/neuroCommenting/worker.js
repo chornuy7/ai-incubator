@@ -27,6 +27,7 @@ import { getAiSafetySync } from '../aiSafety.js'
 import { filterBlacklisted } from '../targetBlacklist.js'
 import { accountFingerprint } from '../lib/deviceFingerprint.js'
 import { accountProxyUrl } from '../proxies.js'
+import { taskErrorText } from '../lib/taskErrors.js'
 
 /** @type {Map<string, Promise<void>>} */
 const running = new Map()
@@ -344,7 +345,7 @@ async function runTask(task) {
     await appendLog(task, 'info', task.status === 'done' ? 'Задача завершена' : 'Задача остановлена')
   } catch (err) {
     task.status = 'error'
-    await appendLog(task, 'error', err instanceof Error ? err.message : 'Критическая ошибка')
+    await appendLog(task, 'error', taskErrorText(err, 'нейрокомментинг'))
   }
 
   await saveTask(task)

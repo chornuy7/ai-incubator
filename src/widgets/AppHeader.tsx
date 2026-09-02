@@ -186,8 +186,12 @@ export function AppHeader() {
 
     const iv = setInterval(() => {
       if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
-      // Канал жив — сервер уже сказал бы. Ходим только когда его нет.
-      if (liveConnected()) return
+      /*
+       * Канал жив И данные уже есть — сервер сам скажет об изменении. Но если первая
+       * загрузка не удалась, канал нас не спасёт: он сообщает об изменениях, а не о том,
+       * что мы ничего не получили. Тогда продолжаем спрашивать.
+       */
+      if (liveConnected() && tickets.length && tasks.length) return
       pull()
     }, 300000)
     return () => { alive = false; clearInterval(iv); for (const off of отписки) off() }

@@ -86,7 +86,9 @@ export function useBalance(): Balance | null {
      */
     if (timer === null) {
       timer = window.setInterval(() => {
-        if (liveConnected()) return
+        // Канал жив И значение уже есть — спрашивать нечего: об изменении скажет сервер.
+        // Значения нет — первая загрузка не удалась, и вытащить нас может только опрос.
+        if (liveConnected() && useBalanceStore.getState().balance) return
         void useBalanceStore.getState().refresh()
       }, POLL_MS)
     }
