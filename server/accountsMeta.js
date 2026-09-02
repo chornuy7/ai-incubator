@@ -66,6 +66,12 @@ const COLUMNS = [
   ['platform',        'is_platform',       'flag'],
   ['statusSince',     'status_since',      'ts'],
   ['statusUntil',     'status_until',      'ts'],
+  /*
+   * MR-292: откуда взялся срок — 'spambot' (назвал сам бот) или 'default' (подставил наш
+   * код). Без этого признака временный спамблок неотличим от вечного: срок есть в обоих
+   * случаях, но во втором он выдуман нами.
+   */
+  ['statusUntilSource', 'status_until_source', 'text'],
   ['statusCode',      'status_code',       'text'],
   // Числа к коду статуса: {"trust":74,"threshold":70}. Текст собирает интерфейс.
   ['statusParams',    'status_params',     'json'],

@@ -131,7 +131,7 @@ export function AccountRail({
                     занимал бы место в каждой строке и перестал бы читаться. */}
                 {a.status !== 'active' && (
                   <div className="mt-0.5">
-                    <StatusBadge status={a.status} until={a.statusUntil} reason={statusText(a.statusCode, a.statusParams)} />
+                    <StatusBadge status={a.status} until={a.statusUntil} reason={statusText(a.statusCode, a.statusParams)} limit={a.limit} />
                   </div>
                 )}
               </div>

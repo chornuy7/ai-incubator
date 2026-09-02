@@ -204,6 +204,8 @@ export function HeroBanner({ account, stats, actions }: {
   const switchPause = stats?.switchPause
   const health = stats?.health
   const trust = stats?.trust
+  // MR-292: вид ограничения считает сервер (limitKind) — один расчёт на список и карточку.
+  const лимит = account.limit && account.limit.kind !== 'none' ? account.limit : null
   return (
     <div className="relative overflow-hidden rounded-2xl border border-iris-500/20 bg-gradient-to-br from-iris-800/70 to-iris-950/80 p-5 text-white">
       <div className="flex items-start gap-4">
@@ -281,14 +283,39 @@ export function HeroBanner({ account, stats, actions }: {
         </div>
       )}
 
-      {/* Что такое спамблок и как снять — раньше плашка «Спамблок» висела без пояснения. */}
-      {spam === 'blocked' && (
+      {/*
+        MR-292: ЧТО именно с аккаунтом, а не просто «Спамблок».
+        Владелец 01.09: «нам нужно определять, что с аккаунтом, и давать чёткое понятие».
+        Виды различаются судьбой аккаунта: временный отпустит сам, вечный снимается только
+        апелляцией, бан платформы не снимается вовсе. Раньше все три выглядели одинаково,
+        и оператор ждал снятия у аккаунта, которого уже нет.
+      */}
+      {лимит ? (
+        <div className={cn(
+          'mt-4 space-y-1 rounded-xl border px-3 py-2.5 text-xs leading-relaxed',
+          лимит.kind === 'temporary' ? 'border-amber-300/40 bg-amber-500/20 text-amber-50' : 'border-rose-300/40 bg-rose-500/20 text-rose-50',
+        )}>
+          <div className="flex items-center gap-1.5 font-bold">
+            <ShieldAlert size={13} /> {лимит.label}
+          </div>
+          {/* Срок показываем ТОЛЬКО когда его назвал сам Telegram: наши догадки сюда не доезжают. */}
+          {лимит.until ? (
+            <div className="inline-flex items-center gap-1.5 font-semibold opacity-90">
+              <Clock size={12} /> До {fmtDate(лимит.until)} — срок назвал сам Telegram
+            </div>
+          ) : лимит.kind === 'permanent' ? (
+            <div className="opacity-90">Срок Telegram не назвал — даты снятия нет.</div>
+          ) : null}
+          <div className="opacity-90">{лимит.what}</div>
+        </div>
+      ) : spam === 'blocked' ? (
+        /* Живая проверка нашла спамблок, а в списке он ещё не отражён — вид неизвестен. */
         <div className="mt-4 space-y-1 rounded-xl border border-rose-300/40 bg-rose-500/20 px-3 py-2.5 text-xs leading-relaxed text-rose-50">
           <div className="flex items-center gap-1.5 font-bold"><ShieldAlert size={13} /> Спамблок Telegram</div>
           <div className="opacity-90">Telegram ограничил аккаунт спам-фильтром — часть действий (комментарии, ЛС новым собеседникам) для него недоступна.</div>
           <div className="opacity-90">Как снять: кнопка «Снять блокировку» подаёт апелляцию через @SpamBot; либо подождать и нажать «Проверить спамблок». До снятия аккаунт в задачи лучше не брать.</div>
         </div>
-      )}
+      ) : null}
 
       {/* MR-129: статус-кнопки (Обновить / Проверить спамблок / Снять блокировку) — в шапке. */}
       {actions && (
