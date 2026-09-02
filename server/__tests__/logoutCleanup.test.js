@@ -123,7 +123,7 @@ test('плитки статусов не показывают нули, пока
   // момент ещё ничего не знаем. На общем компьютере такой ноль читается как пропажа.
   const page = await fs.readFile(new URL('../../src/pages/AccountsPage.tsx', import.meta.url), 'utf8')
   assert.ok(/accountsLoaded/.test(page), 'страница обязана отличать «ещё не знаю» от «знаю, что ноль»')
-  for (const счётчик of ['statusCounts[st]', 'riskCounts[rk]', 'trashed.length']) {
+  for (const счётчик of ['statusCounts[st]', 'riskCounts[rk]', 'вКорзине']) {
     assert.ok(page.includes(`число(${счётчик})`), `счётчик ${счётчик} должен рисоваться прочерком до загрузки`)
   }
 })

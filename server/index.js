@@ -201,6 +201,12 @@ app.post('/api/tg/accounts/list', async (req, res) => {
     pageSize: b.pageSize,
     search: b.search,
     statuses: Array.isArray(b.statuses) ? b.statuses : undefined,
+    countries: Array.isArray(b.countries) ? b.countries : undefined,
+    risk: b.risk || undefined,
+    campaignId: b.campaignId || undefined,
+    busyModule: b.busyModule || undefined,
+    fatigueMin: b.fatigueMin,
+    trashAlive: b.trashAlive === true,
     inTrash: b.inTrash === true,
     sort: b.sort,
   })
