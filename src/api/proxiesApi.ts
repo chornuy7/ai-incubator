@@ -74,6 +74,40 @@ export async function fetchProxies(): Promise<Proxy[]> {
   return data.proxies
 }
 
+/** Сколько прокси в каждой группе фильтра — по ВСЕМУ каталогу, а не по странице. */
+export interface ProxyCounts { all: number; ok: number; broken: number; unknown: number }
+
+export interface ProxiesPage {
+  items: (Proxy & { usedBy?: number })[]
+  page: { number: number; size: number; total: number; pages: number }
+  counts: ProxyCounts
+}
+
+export interface ProxiesQuery {
+  page?: number
+  pageSize?: number
+  search?: string
+  status?: 'all' | 'ok' | 'broken' | 'unknown'
+}
+
+/**
+ * Страница каталога прокси.
+ *
+ * Тот же контракт, что у списка аккаунтов: фильтр, поиск и постраничность уходят на
+ * сервер, счётчики групп считает база. Каталог растёт, а на экране два десятка строк —
+ * рисовать сотню карточек разом незачем.
+ */
+export async function fetchProxiesPage(query: ProxiesQuery = {}): Promise<ProxiesPage> {
+  const d = await apiPost<{ items?: ProxiesPage['items']; page?: ProxiesPage['page']; counts?: ProxyCounts }>(
+    '/api/proxies/list', query as unknown as Record<string, unknown>,
+  )
+  return {
+    items: Array.isArray(d.items) ? d.items : [],
+    page: d.page || { number: 1, size: 25, total: 0, pages: 1 },
+    counts: d.counts || { all: 0, ok: 0, broken: 0, unknown: 0 },
+  }
+}
+
 /**
  * Поля, которые КЛИЕНТ ОТПРАВЛЯЕТ. Отдельно от `Proxy` (что он получает), потому что
  * пароль ходит только в одну сторону: задать его можно, прочитать — нет (MR-290).

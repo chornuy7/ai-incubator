@@ -39,6 +39,38 @@ proxiesRouter.get('/', async (req, res) => {
   } catch (err) { fail(res, err, 500) }
 })
 
+/**
+ * Каталог прокси СТРАНИЦАМИ.
+ *
+ * POST, а не GET: у запроса фильтр, поиск и постраничность — это тело, а не строка
+ * адреса. Тот же контракт, что у списка аккаунтов, чтобы страницы вели себя одинаково.
+ *
+ * Отбор по владельцу уезжает В запрос: фильтровать после выборки страницы значит показать
+ * страницу, где половина строк вычеркнута, и счётчик «всего» по чужому каталогу.
+ */
+proxiesRouter.post('/list', async (req, res) => {
+  try {
+    const { ownerScopeForRequest } = await import('./lib/accessGuard.js')
+    const scope = await ownerScopeForRequest(req)
+    if (scope.blocked) {
+      return res.json({ ok: true, items: [], page: { number: 1, size: 25, total: 0, pages: 1 }, counts: { all: 0, ok: 0, broken: 0, unknown: 0 } })
+    }
+    const b = req.body ?? {}
+    const { listProxiesPage } = await import('./proxies.js')
+    const { proxyUsage } = await import('./accountsList.js')
+    const ownerId = scope.all ? null : scope.ownerId
+    const [страница, usage] = await Promise.all([
+      listProxiesPage({ page: b.page, pageSize: b.pageSize, search: b.search, status: b.status, ownerId }),
+      proxyUsage(ownerId).catch(() => ({})),
+    ])
+    res.json({
+      ok: true,
+      ...страница,
+      items: страница.items.map((p) => ({ ...p, usedBy: usage[p.id] || 0 })),
+    })
+  } catch (err) { fail(res, err, 500) }
+})
+
 // §6: прокси, назначенные >1 аккаунту. До GET /:id.
 proxiesRouter.get('/shared', async (req, res) => {
   try {
