@@ -41,6 +41,7 @@ const emptyForm = (): ProxyInput => ({ label: '', kind: 'static', scheme: 'socks
 
 export function ProxiesPage() {
   const [proxies, setProxies] = useState<Proxy[]>([])
+  /** Список аккаунтов — только для окна «Назначить», и подгружается при его открытии. */
   const [accounts, setAccounts] = useState<TgAccount[]>([])
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')
@@ -49,6 +50,14 @@ export function ProxiesPage() {
   const [form, setForm] = useState<ProxyInput>(emptyForm())
   const [saving, setSaving] = useState(false)
   const [assignFor, setAssignFor] = useState<Proxy | null>(null)
+  /*
+   * Список аккаунтов подгружается, КОГДА открывают «Назначить», а не при входе на
+   * страницу. Раньше он грузился всегда — ради окна, которое открывают изредка.
+   */
+  useEffect(() => {
+    if (!assignFor || accounts.length) return
+    void fetchAccounts().then(setAccounts).catch(() => {})
+  }, [assignFor, accounts.length])
   const [detailProxy, setDetailProxy] = useState<Proxy | null>(null)
   const [geoMap, setGeoMap] = useState<Record<string, ProxyGeo | null>>({})
   const [geoSrcMap, setGeoSrcMap] = useState<Record<string, 'exit' | 'gateway' | null>>({})
@@ -71,8 +80,15 @@ export function ProxiesPage() {
   async function load(opts?: { silent?: boolean }) {
     if (!opts?.silent) setLoading(true)
     try {
-      const [px, accs] = await Promise.all([fetchProxies(), fetchAccounts().catch(() => [])])
-      setProxies(px); setAccounts(accs)
+      /*
+       * Аккаунты здесь больше не грузятся.
+       *
+       * Их тянули ради двух вещей: посчитать «занято N» и наполнить окно «Назначить».
+       * Первое сервер уже присылает вместе с каталогом (`usedBy`), а второе нужно ровно в
+       * тот момент, когда окно открывают. Открытие страницы «Прокси» стоило полного парка.
+       */
+      const px = await fetchProxies()
+      setProxies(px)
     } catch (e) { if (!opts?.silent) setErr(e instanceof Error ? e.message : 'Ошибка загрузки') }
     finally { if (!opts?.silent) setLoading(false) }
   }
@@ -119,7 +135,8 @@ export function ProxiesPage() {
     const m: Record<string, number> = {}
     // MR-290: считаем по ССЫЛКЕ. Сравнение собранных строк давало ноль занятых, как
     // только строка подключения у аккаунта пустела, — а именно это и произошло на бою.
-    for (const p of proxies) m[p.id] = accounts.filter((a) => a.proxyId === p.id).length
+    // Считает сервер: он видит все аккаунты, а страница — только те, что успела загрузить.
+    for (const p of proxies) m[p.id] = Number((p as { usedBy?: number }).usedBy) || 0
     return m
   }, [proxies, accounts])
 

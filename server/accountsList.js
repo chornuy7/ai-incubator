@@ -453,6 +453,61 @@ async function сводкаПарка(db, ownerId) {
 }
 
 /**
+ * Сводка по парку БЕЗ строк списка.
+ *
+ * Нужна шапке панели: она показывает «сколько в строю из скольких» на КАЖДОЙ странице.
+ * Раньше ради этих двух чисел грузился весь парк — на «Прокси», «Статистике» и всюду,
+ * где аккаунтов нет на экране вовсе.
+ *
+ * @param {string|null} ownerId
+ */
+export async function accountsSummary(ownerId = null) {
+  const db = supabaseEnabled() ? getSupabase() : null
+  if (!db) throw new Error('Сводка по аккаунтам доступна только с базой (DATA_BACKEND=supabase)')
+  return сводкаПарка(db, ownerId)
+}
+
+/**
+ * Кто «не в строю» — с именами и разбором по причинам.
+ *
+ * Имён отдаём немного: список нужен, чтобы ответить «кто именно», а не чтобы прочитать
+ * десять тысяч строк. Полное число по каждой причине приходит рядом.
+ *
+ * @param {string|null} ownerId @param {number} [limit] сколько имён на причину
+ */
+export async function brokenAccounts(ownerId = null, limit = 8) {
+  const db = supabaseEnabled() ? getSupabase() : null
+  if (!db) throw new Error('Сводка по аккаунтам доступна только с базой (DATA_BACKEND=supabase)')
+
+  let q = db.from(VIEW).select('id, name, phone, status, spamblock, proxy_id, proxy_status').eq('in_trash', false)
+  if (ownerId) q = q.eq('owner_id', String(ownerId))
+  const { data, error } = await q
+  if (error) throw new Error(`[${VIEW}] сводка «не в строю» не прочитана: ${error.message}`)
+
+  const группы = new Map()
+  const добавить = (причина, ссылка, r) => {
+    if (!группы.has(причина)) группы.set(причина, { reason: причина, link: ссылка, total: 0, items: [] })
+    const g = группы.get(причина)
+    g.total += 1
+    // Идентификатор нужен уведомлениям: закрытое уведомление помнится по нему.
+    if (g.items.length < limit) g.items.push({ id: r.id, name: r.name || r.phone || r.id })
+  }
+
+  for (const r of data || []) {
+    const статус = эффективныйСтатус(r)
+    // Порядок разбора тот же, что в панели: причина по прокси — это фильтр риска,
+    // остальные — фильтр статуса. Перепутать их значит открыть пустой список.
+    if (!r.proxy_id) добавить('Без прокси', 'risk=noProxy', r)
+    else if (r.proxy_status === 'dead' || r.proxy_status === 'bad') добавить('Мёртвый прокси', 'risk=deadProxy', r)
+    else if (БЕЗ_РАБОТЫ.has(статус)) добавить(статус, `status=${статус}`, r)
+  }
+  return [...группы.values()].sort((a, b) => b.total - a.total)
+}
+
+/** Статусы, при которых аккаунт работать не может. Совпадает с BROKEN_ACCOUNT_STATUS в панели. */
+const БЕЗ_РАБОТЫ = new Set(['reauth', 'invalid', 'spamblock', 'quarantine', 'frozen'])
+
+/**
  * Один аккаунт по идентификатору — тем же представлением и с той же формой ответа.
  *
  * Отдельная функция, чтобы карточка и список не разошлись: раньше список считал

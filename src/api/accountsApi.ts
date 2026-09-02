@@ -116,6 +116,26 @@ export function toTgAccount(a: ApiAccount): ServerAccount {
  * строка адреса. Заодно поисковый запрос оператора (а это вполне может быть номер
  * телефона) перестаёт оседать в истории браузера и в логах прокси.
  */
+/** Разбор «не в строю» по причинам: сколько и кто именно (имён немного — это ответ, а не список). */
+export interface BrokenGroup { reason: string; link: string; total: number; items: { id: string; name: string }[] }
+
+/**
+ * Числа для шапки панели БЕЗ списка аккаунтов.
+ *
+ * Шапка показывает «в строю N из M» на каждой странице. Раньше ради двух чисел грузился
+ * весь парк — в том числе на «Прокси» и «Статистике», где аккаунтов нет и близко.
+ */
+export async function fetchAccountsSummary(): Promise<{ counts: Record<string, number>; facets: AccountsFacets }> {
+  const d = await apiGet<{ counts?: Record<string, number>; facets?: AccountsFacets }>('/api/tg/accounts/summary')
+  return { counts: d.counts ?? {}, facets: { ...ПУСТЫЕ_ГРАНИ, ...(d.facets || {}) } }
+}
+
+/** Кто «не в строю» — запрашивается по клику, а не постоянно. */
+export async function fetchBrokenAccounts(limit = 8): Promise<BrokenGroup[]> {
+  const d = await apiGet<{ groups?: BrokenGroup[] }>(`/api/tg/accounts/broken?limit=${limit}`)
+  return d.groups ?? []
+}
+
 const ПУСТЫЕ_ГРАНИ: AccountsFacets = { countries: {}, risk: { deadProxy: 0, noProxy: 0, lowTrust: 0 }, modules: {}, busyTotal: 0 }
 
 export async function fetchAccountsPage(query: AccountsQuery = {}): Promise<AccountsPage> {
