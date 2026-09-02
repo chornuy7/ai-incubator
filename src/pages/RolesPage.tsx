@@ -6,6 +6,7 @@ import { cn } from '@/shared/lib/utils'
 import { confirmDialog } from '@/shared/lib/dialog'
 import {
   fetchRoles, fetchRbacCatalog, createRole, updateRole, deleteRole, emptyPermissions, notifyRolesChanged,
+  onNewRoleRequest, notifyRoleCreated,
   type Role, type RbacCatalog, type RolePermissions, type Perm,
 } from '@/api/rolesApi'
 import { ADMIN_BYPASS_ID } from '@/shared/config/rbac'
@@ -20,6 +21,9 @@ const nameKey = (n: string) => n.trim().toLowerCase()
  * По сколько записей показывать в списках раздела «Пользователи и роли» (просьба владельца
  * 21.08: «максимум по 5 показываем и пагинацию»).
  */
+export /** Идентификатор несохранённой роли: в базе такого нет и быть не должно. */
+const DRAFT_ID = '__draft__'
+
 export const PAGE_SIZE = 5
 
 /**
@@ -178,7 +182,14 @@ export function RolesPage({ embedded }: {
       на другую страницу: открытие раздела по ?role= и создание нового шаблона. */
   const [rolePage, setRolePage] = useState(1)
 
-  const selected = useMemo(() => roles.find((r) => r.id === selId) || null, [roles, selId])
+  /** Черновик новой роли (MR-245): существует только на экране, в списке его нет. */
+  const isDraft = selId === DRAFT_ID
+  const selected = useMemo(
+    () => (selId === DRAFT_ID
+      ? { id: DRAFT_ID, name, isTemplate: false, permissions: perms } as Role
+      : roles.find((r) => r.id === selId) || null),
+    [roles, selId, name, perms],
+  )
   const isAdminRole = selected?.builtin && selected.id === ADMIN_BYPASS_ID
 
   async function load() {
@@ -242,23 +253,43 @@ export function RolesPage({ embedded }: {
     ? 'Название не может быть пустым'
     : nameTaken(name, selId) ? 'Роль с таким именем уже есть' : ''
 
-  async function addRole() {
-    try {
-      // Номер ищем свободный, а не по длине списка: после удалений длина повторяется и
-      // так появились «Новая роль 5» в двух экземплярах.
-      const base = 'Новая роль'
-      let n = roles.length + 1
-      while (nameTaken(`${base} ${n}`)) n += 1
-      const r = await createRole({ name: `${base} ${n}`, permissions: emptyPermissions() })
-      setRoles((prev) => [...prev, r])
-      // Тот же список показан в карточках сотрудников выше — иначе новый шаблон
-      // появится там только после перезагрузки страницы.
-      notifyRolesChanged()
-      // Новый шаблон дописывается в конец — перелистываем на последнюю страницу, иначе
-      // кнопка «Создать» открывает редактор, а в списке ничего не появляется.
-      setRolePage(Math.ceil((roles.length + 1) / PAGE_SIZE))
-      selectRole(r)
-    } catch (e) { setErr(e instanceof Error ? e.message : 'Ошибка') }
+  /**
+   * MR-245: кнопка открывает ЧЕРНОВИК, а не создаёт роль.
+   *
+   * Владелец 30.08: «Когда ты в новом пользователе нажимаешь „создать роль“, создаётся
+   * новая роль. По-хорошему она должна не создаться, а закрыться эта херь и начаться
+   * создание роли». Так и было: пустая «Новая роль 7» появлялась в списке сразу, а если
+   * человек передумывал — оставалась там навсегда и предлагалась в выпадающих списках.
+   *
+   * Черновик живёт только на экране: в базу он попадает на «Сохранить», после имени и
+   * доступов. Отказ от него ничего не оставляет.
+   */
+  function addRole() {
+    // Номер ищем свободный, а не по длине списка: после удалений длина повторяется и
+    // так появились «Новая роль 5» в двух экземплярах.
+    const base = 'Новая роль'
+    let n = roles.length + 1
+    while (nameTaken(`${base} ${n}`)) n += 1
+    setSelId(DRAFT_ID)
+    setName(`${base} ${n}`)
+    setIsTemplate(false)
+    setPerms(emptyPermissions())
+    setDirty(true)
+    setErr('')
+  }
+
+  /**
+   * Снять выбор: закрыть редактор и вернуть список в состояние «ничего не выбрано».
+   *
+   * Ею же отменяется черновик — уйти из него значит ровно то же самое: ничего не создать
+   * и очистить форму. Отдельной функции для этого не нужно.
+   */
+  function cancelDraft() {
+    setSelId('')
+    setName('')
+    setPerms(emptyPermissions())
+    setDirty(false)
+    setErr('')
   }
 
   async function removeRole(r: Role) {
@@ -287,6 +318,18 @@ export function RolesPage({ embedded }: {
     if (nameErr) { setErr(`${nameErr}. Дайте роли имя, по которому её узнают в списке пользователей.`); return }
     setSaving(true); setErr('')
     try {
+      if (isDraft) {
+        // Черновик становится ролью только здесь — с именем и доступами, а не пустым.
+        const created = await createRole({ name: name.trim(), isTemplate, permissions: perms })
+        setRoles((prev) => [...prev, created])
+        notifyRolesChanged()
+        // Новая роль дописывается в конец — перелистываем, иначе её не видно в списке.
+        setRolePage(Math.ceil((roles.length + 1) / PAGE_SIZE))
+        selectRole(created)
+        // Если создание начали из формы нового пользователя — она вернётся и подставит роль.
+        notifyRoleCreated(created)
+        return
+      }
       const updated = await updateRole(selected.id, { name: name.trim(), isTemplate, permissions: perms })
       setRoles((prev) => prev.map((r) => (r.id === updated.id ? updated : r)))
       // Переименованный шаблон должен так же называться и в списке выбора выше.
@@ -295,6 +338,33 @@ export function RolesPage({ embedded }: {
     } catch (e) { setErr(e instanceof Error ? e.message : 'Ошибка сохранения') }
     finally { setSaving(false) }
   }
+
+  /*
+   * Встроенный раздел свёрнут (просьба владельца 21.08: «нужно по умолчанию скрыто»).
+   * Шаблон — вещь редкая: собрал набор один раз и месяцами им пользуешься, а список
+   * с редактором прав занимал экран под списком людей, ради которого сюда и заходят.
+   * Отдельная страница (sudo-админка) остаётся раскрытой: там это и есть содержимое.
+   */
+  const [openSection, setOpenSection] = useState(!embedded)
+
+  // Просьба «создать роль» из формы нового пользователя (MR-245).
+  useEffect(() => onNewRoleRequest(() => {
+    /*
+     * РАСКРЫТЬ раздел — иначе кнопка молчит (баг приёмки 01.09: «создайте роль почему не
+     * нажимается»).
+     *
+     * Внутри страницы людей раздел ролей свёрнут по умолчанию, а редактор живёт под
+     * этой шторкой. Форма закрывалась, роль заводилась, страница даже прокручивалась —
+     * но к свёрнутой строке заголовка, и человек видел ровно то, что было до нажатия.
+     */
+    setOpenSection(true)
+    addRole()
+    // Раздел ролей — внизу страницы: без прокрутки человек нажал кнопку и «ничего не произошло».
+    // Два кадра: сначала React дорисует раскрытый раздел, и только потом у него появится место.
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      document.getElementById('templates')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }))
+  }), [roles]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── сеттеры прав (иммутабельно + dirty) ──
   const mark = () => setDirty(true)
@@ -402,13 +472,6 @@ export function RolesPage({ embedded }: {
   const rolePageSafe = Math.min(rolePage, rolePages)
   const shownRoles = roles.slice((rolePageSafe - 1) * PAGE_SIZE, rolePageSafe * PAGE_SIZE)
 
-  /*
-   * Встроенный раздел свёрнут (просьба владельца 21.08: «нужно по умолчанию скрыто»).
-   * Шаблон — вещь редкая: собрал набор один раз и месяцами им пользуешься, а список
-   * с редактором прав занимал экран под списком людей, ради которого сюда и заходят.
-   * Отдельная страница (sudo-админка) остаётся раскрытой: там это и есть содержимое.
-   */
-  const [openSection, setOpenSection] = useState(!embedded)
   const shown = !embedded || openSection
 
   const title = isPlatformAdmin ? 'Роли и доступы' : 'Роли доступа'
@@ -479,13 +542,20 @@ export function RolesPage({ embedded }: {
 
       {!shown ? null : loading ? (
         <Card className="p-6 text-sm text-white/50">Загрузка…</Card>
-      ) : roles.length === 0 ? (
+      ) : roles.length === 0 && !isDraft ? (
         /*
          * Пустой список у владельца — норма, а не сбой: сервер отдаёт ему ТОЛЬКО им же
          * созданные роли (уточнение 21.08 «показывать только созданные роли»), а раньше
          * список начинался с чужих системных «Оператор»/«Sales». Поэтому здесь не голое
          * «ролей нет», а объяснение, зачем шаблон вообще нужен: без него доступ каждому
          * новому сотруднику выставляется тумблерами заново.
+         *
+         * И только пока черновика НЕТ (`!isDraft`). Условие смотрело на одну длину списка,
+         * и заглушка перекрывала редактор: первую роль нельзя было завести вовсе. Обе
+         * кнопки — «создайте роль» в форме пользователя и «Создать роль» в самой заглушке —
+         * заводили черновик, который тут же прятался под этой заглушкой, и человек видел
+         * ровно то же, что до нажатия (приёмка 02.09: «должна сразу создаваться роль, а не
+         * просто открывать создание»).
          */
         <EmptyState
           icon={<ShieldCheck size={26} />}
@@ -507,7 +577,16 @@ export function RolesPage({ embedded }: {
             {shownRoles.map((r) => (
               <button
                 key={r.id}
-                onClick={() => selectRole(r)}
+                /*
+                 * Повторное нажатие СНИМАЕТ выбор (просьба владельца 02.09): редактор
+                 * прячется, строка перестаёт быть активной. Раньше выбранную роль нельзя
+                 * было отпустить — форма на восемьдесят тумблеров висела под списком до
+                 * перезагрузки страницы, а «закрыть» её было нечем.
+                 *
+                 * Несохранённые правки при этом теряются — ровно как и при переходе на
+                 * другую роль: выбор роли всегда перечитывал её значения с нуля.
+                 */
+                onClick={() => (selId === r.id ? cancelDraft() : selectRole(r))}
                 className={`group flex items-center justify-between gap-2 rounded-xl border px-3 py-2.5 text-left transition ${selId === r.id ? 'border-spark-500/50 bg-spark-500/10' : 'border-line bg-elevated hover:border-spark-500/30'}`}
               >
                 <span className="min-w-0">
@@ -528,11 +607,37 @@ export function RolesPage({ embedded }: {
               </button>
             ))}
             </div>
+            {/*
+              Список пуст, а редактор открыт — левая колонка иначе была бы просто пустым
+              местом рядом с формой, и непонятно, что это за колонка и почему она пустая.
+            */}
+            {roles.length === 0 && (
+              <div className="rounded-xl border border-dashed border-line px-3 py-2.5 text-[11px] leading-snug text-muted">
+                Ролей пока нет — эта станет первой. Появится в списке после сохранения.
+              </div>
+            )}
             <Pager page={rolePageSafe} total={roles.length} onPage={setRolePage} label={'ролей'} />
           </div>
 
+          {/*
+            ПРАВАЯ КОЛОНКА — ОДИН элемент сетки.
+
+            Здесь лежали три соседних элемента подряд: подсказка про черновик, заглушка
+            «выберите роль» и сам редактор. В сетке `280px 1fr` это раскладывается не так,
+            как читается в коде: второй элемент занимает правую колонку, а третий переносится
+            на новую строку — В ЛЕВУЮ, шириной 280 пикселей. Пока черновика не было, элементов
+            было два и всё сходилось; стоило открыть черновик — редактор уезжал в узкий
+            столбец под список (приёмка 02.09: «раньше открывалось справа, что стало?»).
+          */}
+          <div>
           {/* Редактор выбранной роли. Не выбрана — вместо полутора экранов тумблеров
               стоит приглашение: список слева и есть то, ради чего сюда заходят. */}
+          {isDraft && (
+            <div className="mb-3 rounded-xl border border-spark-500/30 bg-spark-500/8 px-3 py-2 text-[11px] text-white/60">
+              Новая роль ещё не создана: дайте ей имя, отметьте доступы и нажмите «Создать роль».
+              До этого её нет ни в списке, ни в выборе у пользователей.
+            </div>
+          )}
           {!selected && (
             <Card className="flex min-h-[160px] items-center justify-center p-6 text-center">
               <div className="text-sm text-white/45">
@@ -559,8 +664,12 @@ export function RolesPage({ embedded }: {
                     Шаблон
                   </label>
                 )}
+                {/* Черновик можно бросить — и в базе ничего не останется (MR-245). */}
+                {isDraft && (
+                  <button onClick={cancelDraft} disabled={saving} className="btn-ghost h-10">Отмена</button>
+                )}
                 <button onClick={() => void save()} disabled={!dirty || saving || !!nameErr} className="btn-primary h-10 disabled:opacity-40">
-                  <Save size={15} /> {saving ? 'Сохранение…' : 'Сохранить'}
+                  <Save size={15} /> {saving ? 'Сохранение…' : (isDraft ? 'Создать роль' : 'Сохранить')}
                 </button>
               </div>
               {nameErr && <div className="mb-4 text-[11px] text-rose-300">{nameErr} — по имени шаблон выбирают на вкладке «Пользователи».</div>}
@@ -741,6 +850,7 @@ export function RolesPage({ embedded }: {
               ) : null}
             </Card>
           )}
+          </div>
         </div>
       )}
     </div>
