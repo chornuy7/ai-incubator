@@ -278,7 +278,12 @@ export function RolesPage({ embedded }: {
     setErr('')
   }
 
-  /** Уйти из черновика, ничего не создав. */
+  /**
+   * Снять выбор: закрыть редактор и вернуть список в состояние «ничего не выбрано».
+   *
+   * Ею же отменяется черновик — уйти из него значит ровно то же самое: ничего не создать
+   * и очистить форму. Отдельной функции для этого не нужно.
+   */
   function cancelDraft() {
     setSelId('')
     setName('')
@@ -572,7 +577,16 @@ export function RolesPage({ embedded }: {
             {shownRoles.map((r) => (
               <button
                 key={r.id}
-                onClick={() => selectRole(r)}
+                /*
+                 * Повторное нажатие СНИМАЕТ выбор (просьба владельца 02.09): редактор
+                 * прячется, строка перестаёт быть активной. Раньше выбранную роль нельзя
+                 * было отпустить — форма на восемьдесят тумблеров висела под списком до
+                 * перезагрузки страницы, а «закрыть» её было нечем.
+                 *
+                 * Несохранённые правки при этом теряются — ровно как и при переходе на
+                 * другую роль: выбор роли всегда перечитывал её значения с нуля.
+                 */
+                onClick={() => (selId === r.id ? cancelDraft() : selectRole(r))}
                 className={`group flex items-center justify-between gap-2 rounded-xl border px-3 py-2.5 text-left transition ${selId === r.id ? 'border-spark-500/50 bg-spark-500/10' : 'border-line bg-elevated hover:border-spark-500/30'}`}
               >
                 <span className="min-w-0">
