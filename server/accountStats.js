@@ -125,13 +125,22 @@ export async function checkSpamblock(client) {
     const bot = await client.getEntity('SpamBot')
     await client.sendMessage(bot, { message: '/start' })
     await sleep(SPAMCHECK_WAIT_MS)
-    const msgs = await client.getMessages(bot, { limit: 1 })
-    const text = msgs?.[0]?.message || ''
+    const msg = (await client.getMessages(bot, { limit: 1 }))?.[0]
+    const text = msg?.message || ''
     if (/no limits|not limited|free as a bird|good news|ограничени\w* (сняты|нет)|свобод/i.test(text)) {
       return { state: 'clean', text: text.slice(0, 300) }
     }
     if (/is limited|restricted|ограничен|заблокирован|until/i.test(text)) {
       return { state: 'blocked', text: text.slice(0, 300) }
+    }
+    // Структурный фолбек: кнопки читаются на любом языке, текст — нет.
+    // @SpamBot при ограничении показывает кнопки апелляции; при чистом аккаунте — только «OK».
+    const allBtns = (msg?.replyMarkup?.rows || []).flatMap((r) => r.buttons || [])
+    if (allBtns.length > 0) {
+      const neutral = /^(ok|ок|what is spam\??|что такое спам\??)$/i
+      const nonNeutral = allBtns.filter((b) => b?.text && !neutral.test(String(b.text).trim()))
+      if (nonNeutral.length > 0) return { state: 'blocked', text: text.slice(0, 300) }
+      return { state: 'clean', text: text.slice(0, 300) }
     }
     return { state: 'unknown', text: text.slice(0, 300) }
   } catch {

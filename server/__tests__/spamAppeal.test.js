@@ -257,3 +257,31 @@ test('«OK» остаётся под запретом даже когда кно
   assert.deepEqual(нажато, ['/start'], 'кроме /start ничего слать нельзя')
   assert.equal(r.appealed, false)
 })
+
+test('португальский чистый аккаунт — только «OK», не нажимаем → clean, не unknown', async () => {
+  /*
+   * Живой кейс: @SpamBot отвечает на языке аккаунта. Чистый португальский текст не
+   * совпадает ни с CLEAN (EN/RU), ни с BLOCKED-регуляркой. Без структурного фолбека
+   * модуль возвращал 'unknown'. С кнопкой «OK» (единственная) → clean.
+   */
+  const c = fakeClient([
+    { message: 'Olá! Nenhuma restrição aplicada à sua conta no momento.', buttons: [{ text: 'OK' }] },
+  ])
+  const r = await appealSpamblock(c, opts)
+  assert.equal(r.state, 'clean', 'только нейтральная кнопка при чужом тексте → clean')
+  assert.equal(r.appealed, false)
+})
+
+test('португальский ограниченный с нескольк. кнопками — blocked, не unknown', async () => {
+  /*
+   * @SpamBot: 2+ кнопки в португальском (ни одна не совпадает с EN/RU приоритетами,
+   * а loneButton не сработает, потому что их больше одной). Структурный фолбек:
+   * есть не-нейтральная кнопка → blocked.
+   */
+  const c = fakeClient([
+    { message: 'Olá, Abel! Algumas restrições foram aplicadas.', buttons: [{ text: 'OK' }, { text: 'Este é um engano' }] },
+  ])
+  const r = await appealSpamblock(c, opts)
+  assert.equal(r.state, 'blocked', 'не-нейтральная кнопка при чужом тексте → blocked')
+  assert.equal(r.appealed, false)
+})

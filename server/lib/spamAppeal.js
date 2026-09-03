@@ -245,6 +245,16 @@ export async function appealSpamblock(client, opts = {}) {
     // хотя бот в этот момент ещё спрашивал «Would you like to submit a complaint?».
     if (appealed) return { state: 'stalled', text: cut(text), appealed: true }
     if (BLOCKED.test(text)) return { state: 'blocked', text: cut(text), appealed: false }
+    // Структурный фолбек для нерусского/неанглийского ответа: если ничего не нажимали,
+    // читаем кнопки — они одинаковы на любом языке.
+    if (!appealed) {
+      const allBtns = (msg?.replyMarkup?.rows || []).flatMap((r) => r.buttons || [])
+      if (allBtns.length > 0) {
+        const nonNeutral = allBtns.filter((b) => b?.text && !NEVER_PRESS.test(String(b.text).trim()))
+        if (nonNeutral.length > 0) return { state: 'blocked', text: cut(text), appealed: false }
+        return { state: 'clean', text: cut(text), appealed: false }
+      }
+    }
     return { state: 'unknown', text: cut(text), appealed }
   } catch (e) {
     return { state: 'unknown', text: e instanceof Error ? e.message : '', appealed: false }
@@ -295,10 +305,18 @@ export async function checkSpamblock(client, opts = {}) {
     const bot = await client.getEntity('SpamBot')
     await client.sendMessage(bot, { message: '/start' })
     await sleep(wait)
-    const text = ((await client.getMessages(bot, { limit: 1 }))?.[0]?.message || '').trim()
+    const msg = (await client.getMessages(bot, { limit: 1 }))?.[0]
+    const text = (msg?.message || '').trim()
     if (!text) return { state: 'unknown', text: '', until: null }
     if (CLEAN.test(text)) return { state: 'clean', text: text.slice(0, 300), until: null }
     if (BLOCKED.test(text)) return { state: 'blocked', text: text.slice(0, 300), until: parseSpamUntil(text) }
+    // Структурный фолбек: кнопки читаются на любом языке, текст — нет.
+    const allBtns = (msg?.replyMarkup?.rows || []).flatMap((r) => r.buttons || [])
+    if (allBtns.length > 0) {
+      const nonNeutral = allBtns.filter((b) => b?.text && !NEVER_PRESS.test(String(b.text).trim()))
+      if (nonNeutral.length > 0) return { state: 'blocked', text: text.slice(0, 300), until: parseSpamUntil(text) }
+      return { state: 'clean', text: text.slice(0, 300), until: null }
+    }
     return { state: 'unknown', text: text.slice(0, 300), until: null }
   } catch (e) {
     return { state: 'unknown', text: e instanceof Error ? e.message : '', until: null }
