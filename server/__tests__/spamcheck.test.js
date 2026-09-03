@@ -12,11 +12,18 @@ import assert from 'node:assert/strict'
 process.env.SPAMCHECK_WAIT_MS = '1'
 const { checkSpamblock, spamcheckAction } = await import('../accountStats.js')
 
-/** Клиент-заглушка: отдаёт заданный текст «от @SpamBot» либо падает, как оборванная сеть. */
-const fakeClient = (message, { fail = false } = {}) => ({
+/**
+ * Клиент-заглушка: отдаёт текст и опционально кнопки «от @SpamBot» либо падает.
+ * buttons — массив строк (текст кнопок), они идут в одну строку ReplyKeyboardMarkup.
+ */
+const fakeClient = (message, { fail = false, buttons = null } = {}) => ({
   getEntity: async () => { if (fail) throw new Error('network'); return { id: 1 } },
   sendMessage: async () => {},
-  getMessages: async () => [{ message }],
+  getMessages: async () => {
+    const msg = { message }
+    if (buttons) msg.replyMarkup = { rows: [{ buttons: buttons.map((text) => ({ text })) }] }
+    return [msg]
+  },
 })
 
 test('чистый аккаунт: ответ бота читается как «ограничений нет»', async () => {
@@ -50,6 +57,18 @@ test('невнятный ответ — «неизвестно», а не «чи
 test('оборвалась связь — «неизвестно» и пустой текст, без падения', async () => {
   const r = await checkSpamblock(fakeClient('', { fail: true }))
   assert.deepEqual(r, { state: 'unknown', text: '' })
+})
+
+test('португальский: кнопка апелляции → «ограничен», а не «неизвестно»', async () => {
+  // Живой кейс 02.09: «Olá, Abel! …alguns números de telefone…» дал state:'unknown'.
+  // Теперь кнопка апелляции (не-нейтральная) → blocked, независимо от языка текста.
+  const r = await checkSpamblock(fakeClient('Olá, Abel! Algumas restrições foram aplicadas à sua conta.', { buttons: ['OK', 'Este é um engano'] }))
+  assert.equal(r.state, 'blocked', 'нейтивный текст на португальском не должен давать «неизвестно»')
+})
+
+test('португальский: только «OK» → «чисто», а не «неизвестно»', async () => {
+  const r = await checkSpamblock(fakeClient('Olá! Nenhuma restrição aplicada à sua conta no momento.', { buttons: ['OK'] }))
+  assert.equal(r.state, 'clean', 'только нейтральные кнопки при неизвестном тексте → clean')
 })
 
 test('длинный ответ бота обрезается — в журнал не уедет простыня', async () => {

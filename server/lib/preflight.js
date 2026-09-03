@@ -32,10 +32,27 @@ const STATUS_RU = {
 }
 
 /**
+ * MR-297: модули, для которых нерабочий статус — не помеха, а УСЛОВИЕ работы.
+ *
+ * Снятие спамблока по определению идёт по спамблокнутым аккаунтам: `appealOne` намеренно
+ * обходит статус-гейт при подключении, потому что иначе сюда не прошёл бы ни один. А
+ * проверка перед запуском об этом не знала и браковала весь список: «Запуск отменён: ни
+ * один аккаунт не готов… в спамблоке» (живой прогон на проде 02.09). Первый запуск ещё
+ * проходил, а возобновление после перезапуска сервиса — уже нет, то естьзадача умирала
+ * от любого рестарта.
+ *
+ * Остальные проверки остаются в силе и здесь: нет сессии, нет прокси, мёртвый прокси —
+ * это настоящие помехи, и молчать о них нельзя.
+ */
+const СТАТУС_НЕ_ПОМЕХА = new Set(['spam-unblock'])
+
+/**
  * @param {string[]} accountIds
+ * @param {{moduleKey?: string}} [opts] ключ модуля — от него зависит, считать ли статус помехой
  * @returns {Promise<{ ready: string[], problems: {accountId:string,name:string,reason:string}[] }>}
  */
-export async function preflightAccounts(accountIds = []) {
+export async function preflightAccounts(accountIds = [], opts = {}) {
+  const статусВажен = !СТАТУС_НЕ_ПОМЕХА.has(String(opts.moduleKey || ''))
   const ready = []
   const problems = []
   for (const accountId of accountIds) {
@@ -46,7 +63,7 @@ export async function preflightAccounts(accountIds = []) {
 
     if (meta.inTrash) { problems.push({ accountId, name, reason: 'аккаунт в корзине' }); continue }
     // 'working' — аккаунт уже в работе этой же задачи (перезапуск), это не проблема.
-    if (status !== 'working' && !isAccountRunnable(status)) {
+    if (статусВажен && status !== 'working' && !isAccountRunnable(status)) {
       problems.push({ accountId, name, reason: STATUS_RU[status] || `статус «${status}»` })
       continue
     }
@@ -81,7 +98,7 @@ export async function preflightAccounts(accountIds = []) {
  */
 export async function preflightAndLog(task, store) {
   const ids = task.settings?.accountIds || []
-  const { ready, problems } = await preflightAccounts(ids)
+  const { ready, problems } = await preflightAccounts(ids, { moduleKey: task.moduleKey })
   for (const p of problems) {
     try { await store.appendLog(task, 'warning', `Аккаунт пропущен: ${p.reason}`, p.name) } catch { /* лог не должен ронять старт */ }
   }
