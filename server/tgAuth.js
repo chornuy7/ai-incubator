@@ -7,9 +7,12 @@ import { Api } from 'telegram/tl/index.js'
 import { computeCheck } from 'telegram/Password.js'
 import { SESSIONS_DIR, API_ID, API_HASH, PENDING_TTL_MS } from './config.js'
 import { parseProxy, clientOptions } from './proxy.js'
-import { setAccountMeta, countryFromPhone, avatarColor } from './accountsMeta.js'
+import { tcpPing } from './proxies.js'
+import { setAccountMeta, getAccountMeta, countryFromPhone, avatarColor } from './accountsMeta.js'
+import { getSupabase, supabaseEnabled, isMissingTable } from './lib/supabase.js'
+import { decryptSecret, secretForStorage } from './lib/secretBox.js'
 
-/** @typedef {{ client: TelegramClient, phone: string, phoneCodeHash: string, proxy?: string, accountId?: string, timer: NodeJS.Timeout }} PendingAuth */
+/** @typedef {{ client: TelegramClient, phone: string, phoneCodeHash: string, proxy?: string, accountId?: string, ownerId?: string, timer: NodeJS.Timeout }} PendingAuth */
 
 /** @type {Map<string, PendingAuth>} */
 const pending = new Map()
@@ -22,20 +25,130 @@ function sessionFile(accountId) {
   return path.join(SESSIONS_DIR, `${accountId}.session`)
 }
 
-async function saveSession(accountId, sessionString) {
+/*
+ * MR-290: сессия — самый сильный секрет системы.
+ *
+ * StringSession это уже пройденная авторизация: ей не нужен ни телефон, ни код, ни
+ * облачный пароль. Лежала она файлом открытым текстом — то есть копия каталога означала
+ * копию всех аккаунтов. Теперь сессия живёт в таблице `account_sessions` в шифрованном
+ * виде (ключ SECRETS_KEY в окружении, в базе его нет).
+ *
+ * Файл остаётся ЗАПАСНЫМ ПУТЁМ на время переезда: скрипт sessions-to-db.mjs переносит
+ * старые сессии, и до его запуска чтение обязано находить их на диске. Записывать в файл
+ * мы уже перестали — иначе появились бы два источника одной сессии.
+ */
+const SESSIONS_TABLE = 'account_sessions'
+function sessionsDb() { return supabaseEnabled() ? getSupabase() : null }
+
+/** Записать строку-сессию под accountId. Экспортируется для §2 (массовый импорт). */
+export async function saveSession(accountId, sessionString) {
+  const db = sessionsDb()
+  if (db) {
+    const { error } = await db.from(SESSIONS_TABLE).upsert({
+      account_id: accountId,
+      session_enc: secretForStorage(sessionString, true),
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'account_id' })
+    // Молчать нельзя: несохранённая сессия означает потерянный аккаунт — второй раз
+    // Telegram её не выдаст без повторного входа по коду.
+    if (error) throw new Error(`[${SESSIONS_TABLE}] сессия не сохранена: ${error.message}`)
+    return
+  }
   await ensureSessionsDir()
-  await fs.writeFile(sessionFile(accountId), sessionString, 'utf8')
+  await fs.writeFile(sessionFile(accountId), secretForStorage(sessionString, false), 'utf8')
 }
 
 export async function loadSessionString(accountId) {
+  const db = sessionsDb()
+  if (db) {
+    const { data, error } = await db.from(SESSIONS_TABLE).select('session_enc').eq('account_id', accountId).maybeSingle()
+    if (!error && data?.session_enc) return decryptSecret(data.session_enc) || ''
+    // Таблицы ещё нет или сессия не перенесена — ищем на диске, как раньше.
+  }
   try {
-    return await fs.readFile(sessionFile(accountId), 'utf8')
+    return decryptSecret(await fs.readFile(sessionFile(accountId), 'utf8')) || ''
   } catch {
     return ''
   }
 }
 
-function newAccountId(phone) {
+/** Убрать сессию аккаунта отовсюду. Вызывается при удалении аккаунта. */
+export async function deleteSession(accountId) {
+  const db = sessionsDb()
+  if (db) {
+    const { error } = await db.from(SESSIONS_TABLE).delete().eq('account_id', accountId)
+    if (error && !isMissingTable(error)) throw new Error(`[${SESSIONS_TABLE}] сессия не удалена: ${error.message}`)
+  }
+  try { await fs.unlink(sessionFile(accountId)) } catch { /* файла и не было */ }
+}
+
+/**
+ * Идентификаторы аккаунтов, у которых есть сессия. Список аккаунтов строится по ним.
+ * На время переезда объединяем базу и диск: перенос ещё не прошёл, а показывать половину
+ * парка нельзя.
+ * @returns {Promise<string[]>}
+ */
+export async function listSessionIds() {
+  const ids = new Set()
+  const db = sessionsDb()
+  if (db) {
+    const { data, error } = await db.from(SESSIONS_TABLE).select('account_id')
+    if (error && !isMissingTable(error)) throw new Error(`[${SESSIONS_TABLE}] список сессий не прочитан: ${error.message}`)
+    for (const r of data || []) ids.add(r.account_id)
+  }
+  try {
+    await ensureSessionsDir()
+    for (const f of await fs.readdir(SESSIONS_DIR)) {
+      if (f.endsWith('.session')) ids.add(f.replace(/\.session$/, ''))
+    }
+  } catch { /* каталога нет — значит и файловых сессий нет */ }
+  return [...ids]
+}
+
+/**
+ * У кого из перечисленных аккаунтов сессия есть — ОДНИМ запросом на весь список.
+ *
+ * Списку аккаунтов сама строка сессии не нужна: он только отсеивает тех, у кого её нет.
+ * Раньше ради этого звался `loadSessionString` по аккаунту — то есть на парк из сотни
+ * это сто обращений к базе подряд плюс сто расшифровок, и всё ради одного бита на строку.
+ *
+ * Расшифровки здесь нет вовсе и быть не должно: наружу идёт только «есть/нет».
+ *
+ * @param {string[]} ids @returns {Promise<Set<string>>}
+ */
+export async function sessionPresence(ids = []) {
+  const нужные = [...new Set((ids || []).map(String).filter(Boolean))]
+  const есть = new Set()
+  if (!нужные.length) return есть
+
+  const db = sessionsDb()
+  if (db) {
+    // Пачками: длина URL у PostgREST ограничена, а `in` уезжает в query-строку.
+    for (let i = 0; i < нужные.length; i += 200) {
+      const кусок = нужные.slice(i, i + 200)
+      const { data, error } = await db.from(SESSIONS_TABLE).select('account_id, session_enc').in('account_id', кусок)
+      if (error && !isMissingTable(error)) throw new Error(`[${SESSIONS_TABLE}] список сессий не прочитан: ${error.message}`)
+      for (const r of data || []) if (r.session_enc) есть.add(String(r.account_id))
+    }
+  }
+
+  /*
+   * Остальных ищем на диске — перенос сессий в базу ещё не прогоняли, и на боевом сервере
+   * ВСЕ сессии пока файловые. Пустой файл сессией не считается: раньше это отсеивалось
+   * проверкой пустой строки после чтения, и поведение надо сохранить.
+   */
+  for (const id of нужные) {
+    if (есть.has(id)) continue
+    try {
+      const st = await fs.stat(sessionFile(id))
+      if (st.size > 0) есть.add(id)
+    } catch { /* файла нет — сессии нет */ }
+  }
+  return есть
+}
+
+/** Новый id аккаунта. Экспортируется для §2 (массовый импорт). */
+export function newAccountId(phone) {
   const hash = crypto.createHash('sha256').update(phone + Date.now()).digest('hex').slice(0, 12)
   return `acc_${hash}`
 }
@@ -59,11 +172,115 @@ async function dropPending(authId) {
   }
 }
 
-export async function createClient(sessionString, proxyRaw) {
+/**
+ * Клиент по строке-сессии.
+ *
+ * `fingerprint` — отпечаток устройства, под которым сессия РОЖДЕНА (приходит из json
+ * рядом с купленным аккаунтом: app_id/app_hash, модель устройства, версия системы и
+ * приложения, язык). Подключаться чужим отпечатком — это для Telegram смена устройства
+ * на живой авторизации, самый быстрый способ получить к себе внимание антифрода.
+ * Поэтому если отпечаток известен — идём именно с ним, а свои API-креды берём только
+ * когда своих данных нет.
+ * @param {string} sessionString
+ * @param {string} [proxyRaw]
+ * @param {{apiId?:number, apiHash?:string, device?:string, system?:string, appVersion?:string, langCode?:string, systemLangCode?:string}} [fingerprint]
+ */
+export async function createClient(sessionString, proxyRaw, fingerprint) {
   const proxy = parseProxy(proxyRaw)
-  const client = new TelegramClient(new StringSession(sessionString), API_ID, API_HASH, clientOptions(proxy))
-  await client.connect()
+  // MR-129: быстрый TCP-пинг прокси ПЕРЕД тяжёлым TG-коннектом. Мёртвый прокси отсекаем
+  // за ~2.5с с понятной ошибкой «Прокси не отвечает», а не ждём таймаут подключения 12с.
+  // Ускоряет карточку, каналы и группы; ошибку ловит UI и показывает «прокси недоступен».
+  if (proxy && proxy.ip && proxy.port) {
+    const reachable = await tcpPing(proxy.ip, proxy.port, 2500)
+    if (!reachable) throw new Error('Прокси не отвечает — проверьте прокси или назначьте рабочий')
+  }
+  const fp = fingerprint || {}
+  const opts = clientOptions(proxy)
+  if (fp.device) opts.deviceModel = fp.device
+  if (fp.system) opts.systemVersion = fp.system
+  if (fp.appVersion) opts.appVersion = fp.appVersion
+  if (fp.langCode) opts.langCode = fp.langCode
+  if (fp.systemLangCode) opts.systemLangCode = fp.systemLangCode
+  const apiId = Number(fp.apiId) || API_ID
+  const apiHash = fp.apiHash || API_HASH
+  const client = new TelegramClient(new StringSession(sessionString), apiId, apiHash, opts)
+  /*
+   * Ошибки фонового пинга — с контекстом, а не простынёй из стека (правка 26.08).
+   *
+   * gram держит пинг-цикл (PingDelayDisconnect) на каждом подключённом клиенте и при
+   * неудаче печатает в консоль голый `Error: TIMEOUT` со стеком из updates.js — без
+   * аккаунта, без прокси, без единого слова о причине. В логах сервера этих строк
+   * набирались десятки подряд, и настоящие ошибки в них тонули.
+   *
+   * Молча глушить нельзя: неотвеченный пинг — это реальный сигнал, что прокси перестал
+   * пропускать трафик. Поэтому ошибку перехватываем, пишем ОДНОЙ строкой с прокси и
+   * причиной, а дубль из библиотеки убираем понижением её уровня логирования.
+   */
+  const proxyLabel = proxy?.ip ? `${proxy.ip}:${proxy.port}` : 'без прокси'
+  client.onError = async (err) => {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn(`[tg] фоновый пинг не прошёл · ${proxyLabel} · ${msg}`)
+  }
+  // Уровень можно вернуть на время разбора: GRAM_LOG=info покажет всё, что печатает gram.
+  try { client.setLogLevel(process.env.GRAM_LOG || 'none') } catch { /* старая версия gram — переживём дубль */ }
+  await connectWithTimeout(client)
+  wrapInvoke(client)
   return client
+}
+
+/**
+ * Жёсткий предел на КАЖДЫЙ RPC-вызов + поддержка мгновенного обрыва.
+ *
+ * `connectWithTimeout` ограничивает только подключение. Сам вызов (getMe, getDialogs,
+ * searchPublic…) таймаута не имеет: на прокси, который принял соединение, но наружу не
+ * пускает, gram ждёт ответа бесконечно — карточка аккаунта висела на «Загрузка данных из
+ * Telegram…» минутами (замер 12.08: 5 из 6 аккаунтов >45с), а «Стоп» задачи игнорировался.
+ * Обёртка живёт здесь, а не в воркерах, чтобы предел действовал ВЕЗДЕ: карточка, каналы,
+ * папки, модули. Флаг `client.__aborted` (его взводит abortTaskClients при стопе/паузе)
+ * отклоняет висящий вызов за ~0.25с.
+ * @param {any} client
+ */
+const RPC_TIMEOUT_MS = Math.max(5000, Number(process.env.TG_RPC_TIMEOUT_MS) || 25000)
+function wrapInvoke(client) {
+  const orig = client.invoke.bind(client)
+  client.invoke = (...args) => new Promise((resolve, reject) => {
+    let settled = false
+    const finish = (fn) => (x) => { if (!settled) { settled = true; clearInterval(poll); clearTimeout(hard); fn(x) } }
+    const poll = setInterval(() => { if (client.__aborted) finish(reject)(new Error('ABORTED_BY_STOP')) }, 250)
+    const hard = setTimeout(() => finish(reject)(new Error(`RPC_TIMEOUT (${Math.round(RPC_TIMEOUT_MS / 1000)}с)`)), RPC_TIMEOUT_MS)
+    orig(...args).then(finish(resolve), finish(reject))
+  })
+}
+
+/**
+ * MR-129: жёсткий предел на подключение. Без него мёртвый/медленный прокси с
+ * connectionRetries:5 держал соединение десятки секунд, и карточка аккаунта висела
+ * на «Загрузка данных из Telegram…» (вечный лоадер). Теперь через TG_CONNECT_TIMEOUT_MS
+ * (по умолчанию 12с — рабочий прокси коннектится за 1–3с, мёртвый падает быстро) падаем
+ * с понятной ошибкой — её ловит accountStats и показывает «прокси/сессия недоступны»
+ * вместо бесконечной загрузки.
+ */
+async function connectWithTimeout(client) {
+  const ms = Math.max(5000, Number(process.env.TG_CONNECT_TIMEOUT_MS) || 12000)
+  let timer
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`Не удалось подключиться за ${Math.round(ms / 1000)}с — проверьте прокси/сеть`)), ms)
+  })
+  try {
+    await Promise.race([client.connect(), timeout])
+  } catch (err) {
+    // НЕ ждём disconnect бесконечно: на битом socks-прокси (Socks5 auth failed и т.п.)
+    // client.disconnect() может зависнуть — и тогда весь воркер застревает ЗДЕСЬ, не
+    // доходя до точки проверки «Стоп» (breakableDelay), из-за чего стоп игнорируется
+    // десятками секунд. Гасим соединение в фоне с собственным лимитом и сразу пробрасываем ошибку.
+    void Promise.race([
+      Promise.resolve().then(() => client.disconnect()).catch(() => {}),
+      new Promise((r) => setTimeout(r, 3000)),
+    ])
+    throw err
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 function userPayload(me, accountId, phone, proxy) {
@@ -96,7 +313,7 @@ function mapError(err) {
   return 'Ошибка Telegram API'
 }
 
-export async function tgSendCode({ phone, proxy, accountId }) {
+export async function tgSendCode({ phone, proxy, accountId, ownerId }) {
   const normalized = phone.replace(/\s/g, '')
   if (!/^\+\d{8,15}$/.test(normalized)) {
     throw new Error('Номер должен быть в формате +380XXXXXXXXX')
@@ -115,6 +332,7 @@ export async function tgSendCode({ phone, proxy, accountId }) {
     phoneCodeHash: sent.phoneCodeHash,
     proxy,
     accountId,
+    ownerId, // чьё это пространство — иначе новый аккаунт «ничей» и виден только админу
     timer,
   })
 
@@ -176,7 +394,16 @@ async function finalizeAuth(authId, p) {
 
   const account = userPayload(me, accountId, p.phone, p.proxy)
 
+  /*
+   * Владельца ставим только НОВОМУ аккаунту либо тому, у кого его ещё нет. При
+   * реавторизации чужого аккаунта (админ входит за клиента) переписывать владельца
+   * нельзя — аккаунт молча переехал бы в другое пространство.
+   */
+  const было = await getAccountMeta(accountId).catch(() => ({}))
+  const ставимВладельца = p.ownerId && !было?.ownerId
+
   await setAccountMeta(accountId, {
+    ...(ставимВладельца ? { ownerId: String(p.ownerId) } : {}),
     proxy: p.proxy || '—',
     country: countryFromPhone(account.phone),
     status: 'active',

@@ -1,4 +1,5 @@
 import type { LogEntry } from '@/shared/types'
+import { apiGet, apiPost } from './client'
 
 export interface NeuroCommentingSettings {
   accountIds: string[]
@@ -21,6 +22,8 @@ export interface NeuroCommentingSettings {
   promptOverrides?: string[]
   aiMode: number
   keywords: string[]
+  semanticFilter?: boolean // §3.5: комментировать только по семантически близким к цели постам
+  semanticThreshold?: number
   delayPreset: number
   delays: {
     comment: [number, number]
@@ -59,23 +62,9 @@ export interface NeuroTask {
   accountStats: Record<string, { comments: number; floodWaits: number }>
 }
 
-async function post<T>(path: string, body?: unknown): Promise<T> {
-  const res = await fetch(path, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  })
-  const data = await res.json()
-  if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`)
-  return data
-}
-
-async function get<T>(path: string): Promise<T> {
-  const res = await fetch(path)
-  const data = await res.json()
-  if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`)
-  return data
-}
+// Через authed-клиент: ставит X-User-Id + Bearer, иначе при включённой авторизации 401.
+async function post<T>(path: string, body?: unknown): Promise<T> { return apiPost<T>(path, body) }
+async function get<T>(path: string): Promise<T> { return apiGet<T>(path) }
 
 export async function startNeuroCommentingTask(settings: NeuroCommentingSettings): Promise<NeuroTask> {
   const data = await post<{ task: NeuroTask }>('/api/neuro-commenting/tasks', { settings })

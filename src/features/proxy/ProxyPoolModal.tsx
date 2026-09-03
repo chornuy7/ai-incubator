@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Server, Plus, Trash2, Loader2, CheckCircle2, XCircle } from 'lucide-react'
 import { Modal, Select } from '@/shared/ui'
 import { useApp } from '@/mocks/store'
-import { checkProxy } from '@/mocks/tgApi'
+import { probeProxy } from '@/api/proxiesApi'
 import { cn } from '@/shared/lib/utils'
 import type { Proxy } from '@/shared/types'
 
@@ -34,11 +34,23 @@ export function ProxyPoolModal({ open, onClose }: { open: boolean; onClose: () =
   }
 
   const check = async () => {
+    if (!host.trim() || !port.trim()) return pushToast({ type: 'error', title: 'Заполните хост и порт' })
     if (!guardNet('проверка прокси')) return
     setChecking(true)
-    const res = await checkProxy(`${host}:${port}`)
-    setChecking(false)
-    pushToast({ type: res.ok ? 'success' : 'error', title: res.ok ? `Прокси доступен · ${res.ping}мс` : 'Прокси недоступен' })
+    try {
+      const res = await probeProxy({ host: host.trim(), port: Number(port), scheme: type, username: login.trim() || undefined })
+      if (res.alive) {
+        const geo = res.geo
+        const where = geo ? ` · ${geo.countryName || geo.country}${geo.city ? ', ' + geo.city : ''}` : ''
+        pushToast({ type: 'success', title: `Прокси доступен · ${res.ms}мс`, desc: geo ? `${where.replace(/^ · /, '')}${geo.isp ? ' · ' + geo.isp : ''}` : undefined })
+      } else {
+        pushToast({ type: 'error', title: 'Прокси недоступен', desc: `${host}:${port}` })
+      }
+    } catch (e) {
+      pushToast({ type: 'error', title: 'Ошибка проверки', desc: e instanceof Error ? e.message : '' })
+    } finally {
+      setChecking(false)
+    }
   }
 
   return (

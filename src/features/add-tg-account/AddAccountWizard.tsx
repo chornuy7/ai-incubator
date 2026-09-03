@@ -100,16 +100,16 @@ export function AddAccountWizard({
       const parsed = parsePhone(account.phone)
       setCountry(parsed.country)
       setPhone(parsed.local)
-      const hasProxy = account.proxy && account.proxy !== '—'
+      const hasProxy = !!account.proxyId
       if (!hasProxy) {
         setProxyMode('none')
         setProxy('')
-      } else if (poolOptions.some((o) => o.value === account.proxy)) {
-        setProxyMode('pool')
-        setProxy(account.proxy)
       } else {
-        setProxyMode('manual')
-        setProxy(account.proxy)
+        // Прокси у аккаунта — ССЫЛКА на каталог, а не строка. Режим всегда «из пула»,
+        // и выбирается запись каталога по идентификатору. Строки подключения, из
+        // которой раньше пытались угадать режим, в аккаунте больше нет.
+        setProxyMode('pool')
+        setProxy(account.proxyId || '')
       }
     } else {
       setProxyMode('none')
@@ -127,7 +127,7 @@ export function AddAccountWizard({
       const res = await sendCode(
         fullPhone,
         resolvedProxy,
-        isReauth ? account?.tgSessionId || account?.id : undefined,
+        isReauth ? account?.id : undefined,
       )
       setAuthId(res.authId)
       setCodeViaApp(res.isCodeViaApp)

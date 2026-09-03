@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
 import { useLocation } from 'react-router-dom'
 import { BookOpen, HelpCircle, Layers, Lightbulb, Loader2, Send, Shield, ShieldAlert, Sparkles, Workflow, X } from 'lucide-react'
 import { useUi } from '@/shared/lib/uiStore'
-import { findHelpDoc, type HelpDoc } from '@/shared/config/helpDocs'
+import { findHelpDoc, HELP_DOCS, type HelpDoc } from '@/shared/config/helpDocs'
+
+// Бизнес-правила (§6) — отдельные статьи Help Center, доступные из списка «Все статьи».
+const BUSINESS_TOPICS = ['safety-limits', 'trust-autostop', 'warming-policy', 'captcha-antispam', 'mailing-rules', 'channel-rating', 'proxy-policy', 'rbac-roles']
+const MODULE_TOPICS = ['neuro-commenting', 'neuro-chatting', 'neuro-dialogs', 'mass-react', 'mass-looking', 'warming', 'autoposting', 'ggr', 'parsing', 'parsing-groups', 'parsing-users', 'parsing-messages', 'parsing-comments']
 import { PROTECTION_STEPS } from '@/shared/config/protectionInfo'
-import { apiGet, apiPost } from '@/api/client'
+import { apiPost } from '@/api/client'
 import { cn } from '@/shared/lib/utils'
 
 const QUICK_QUESTIONS = [
@@ -16,6 +19,27 @@ const QUICK_QUESTIONS = [
 ]
 
 type HelpMsg = { id: string; role: 'user' | 'assistant'; text: string }
+
+/**
+ * Тема справки по обычным страницам (не модулям).
+ *
+ * Раньше «?» на любой немодульной странице открывал общий список тем: человек стоял
+ * на статистике и получал перечень статей про нейрокомментинг. Страница должна
+ * объяснять сама себя, а список остаётся как «все статьи».
+ */
+const PAGE_TOPICS: Record<string, string> = {
+  '/panel/admin-stats': 'admin-stats',
+  '/panel/accounts': 'accounts-manager',
+  '/panel/automation': 'automation',
+  '/panel/goals': 'goals',
+  '/panel/campaign': 'campaign',
+  '/panel/tasks': 'tasks',
+  '/panel/crm': 'crm',
+  '/panel/analytics': 'analytics',
+  '/panel/logs': 'logs',
+  '/panel/support': 'support',
+  '/panel/inbox': 'inbox',
+}
 
 /** Достаёт ключ модуля из пути вида /panel/modules/:moduleKey. */
 function moduleKeyFromPath(pathname: string): string | undefined {
@@ -101,7 +125,7 @@ function ProtectionDocSection() {
         <span className="text-xs font-bold uppercase tracking-wide text-spark-300">Защита аккаунтов — как работает</span>
       </div>
       <p className="mb-2 text-xs leading-relaxed text-muted">
-        Общий механизм для всех модулей. Уровень (Консервативный / Сбалансированный / Агрессивный) и пресет задержек
+        Общий механизм для всех модулей. Уровень (Консервативный / Сбалансированный / Агрессивный) и шаблон задержек
         задаются в блоке «Защита аккаунтов» и секции «Тайминги и задержки» модуля; глобальные политики — в ИИ-безопасности.
       </p>
       <ul className="space-y-2">
@@ -138,18 +162,24 @@ export function HelpCenterDrawer() {
   const open = useUi((s) => s.helpOpen)
   const topic = useUi((s) => s.helpTopic)
   const setHelpOpen = useUi((s) => s.setHelpOpen)
+  const setHelpTopic = useUi((s) => s.setHelpTopic)
   const location = useLocation()
 
   const [messages, setMessages] = useState<HelpMsg[]>([])
   const [input, setInput] = useState('')
   const [pending, setPending] = useState(false)
-  const [aiActive, setAiActive] = useState<boolean | null>(null)
   const messagesRef = useRef<HelpMsg[]>([])
   messagesRef.current = messages
   const bottomRef = useRef<HTMLDivElement>(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
 
   const moduleKey = moduleKeyFromPath(location.pathname)
-  const doc = useMemo(() => findHelpDoc(topic, moduleKey), [topic, moduleKey])
+  // Тема не выбрана — берём тему самой страницы, а не общий список.
+  const pageTopic = PAGE_TOPICS[location.pathname] || ''
+  const doc = useMemo(
+    () => findHelpDoc(topic, moduleKey) || (pageTopic ? HELP_DOCS[pageTopic] ?? null : null),
+    [topic, moduleKey, pageTopic],
+  )
   const intro = useMemo(() => helpIntro(topic), [topic])
 
   useEffect(() => {
@@ -159,11 +189,15 @@ export function HelpCenterDrawer() {
       : intro
     setMessages([{ id: 'intro', role: 'assistant', text: first }])
     setInput('')
-    void apiGet<{ ai?: boolean }>('/api/health').then((h) => setAiActive(!!h.ai)).catch(() => setAiActive(null))
+    // Открываем статью С НАЧАЛА (сверху), а не в конце — чтобы не прокручивать вручную вверх.
+    scrollRef.current?.scrollTo({ top: 0 })
   }, [open, intro, doc])
 
-  // авто-скролл к последнему сообщению
-  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' }) }, [messages])
+  // Авто-скролл к последнему сообщению — ТОЛЬКО когда идёт диалог (есть вопросы/ответы,
+  // messages > 1). При открытии (только intro) остаёмся вверху статьи.
+  useEffect(() => {
+    if (messages.length > 1) bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
+  }, [messages])
 
   const send = async (override?: string) => {
     const text = (override ?? input).trim()
@@ -190,21 +224,16 @@ export function HelpCenterDrawer() {
 
   if (!open) return null
 
-  return createPortal(
-    <div className="fixed inset-0 z-[96]">
-      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm animate-fade-in" onClick={() => setHelpOpen(false)} />
-      <div className="absolute right-0 top-0 flex h-full w-full max-w-md flex-col border-l border-line bg-surface shadow-pop animate-fade-in">
+  // §3.1: боковая панель-сайдбар — не оверлей, а колонка в потоке: сужает страницу, чтобы
+  // контент оставался виден рядом. Sticky на всю высоту экрана со своим скроллом.
+  return (
+    <aside className="sticky top-0 z-[40] flex h-screen w-full shrink-0 flex-col border-l border-line bg-surface shadow-pop animate-fade-in lg:w-[440px]">
         <div className="flex items-center justify-between border-b border-line px-5 py-4">
           <div className="flex items-center gap-2.5">
             <HelpCircle size={20} className="text-spark-400" />
             <div>
               <div className="flex items-center gap-2">
                 <h3 className="font-display text-lg font-bold text-fg">Help Center</h3>
-                {aiActive !== null && (
-                  <span className={cn('inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-bold uppercase', aiActive ? 'border-spark-500/30 bg-spark-500/12 text-spark-300' : 'border-amber-500/30 bg-amber-500/12 text-amber-300')}>
-                    <Sparkles size={10} /> {aiActive ? 'ИИ активен' : 'Шаблоны'}
-                  </span>
-                )}
               </div>
               <p className="text-xs text-muted">{doc ? 'Документация и подсказки по разделу' : 'Чат-подсказки по разделу'}</p>
             </div>
@@ -212,8 +241,35 @@ export function HelpCenterDrawer() {
           <button onClick={() => setHelpOpen(false)} className="btn-icon"><X size={18} /></button>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-4">
+        <div ref={scrollRef} className="flex-1 overflow-y-auto p-4">
+          {doc && (
+            <button onClick={() => setHelpTopic('')} className="mb-3 text-xs text-spark-300 hover:underline">◂ Все статьи</button>
+          )}
           {doc && <HelpDocView doc={doc} />}
+          {!doc && (
+            <div className="space-y-4">
+              <div>
+                <div className="mb-2 text-xs font-bold uppercase tracking-wide text-muted">Бизнес-правила</div>
+                <div className="flex flex-col gap-1.5">
+                  {BUSINESS_TOPICS.map((k) => HELP_DOCS[k] && (
+                    <button key={k} onClick={() => setHelpTopic(k)} className="rounded-lg border border-line bg-elevated/40 px-3 py-2 text-left text-sm text-fg transition-colors hover:border-spark-500/40 hover:text-spark-300">
+                      {HELP_DOCS[k].title}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <div className="mb-2 text-xs font-bold uppercase tracking-wide text-muted">Модули</div>
+                <div className="flex flex-wrap gap-1.5">
+                  {MODULE_TOPICS.map((k) => HELP_DOCS[k] && (
+                    <button key={k} onClick={() => setHelpTopic(k)} className="rounded-lg border border-line bg-elevated px-2.5 py-1 text-xs text-white/70 transition-colors hover:border-spark-500/40 hover:text-spark-300">
+                      {HELP_DOCS[k].title}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
           {doc && (
             <div className="mb-3 mt-5 flex items-center gap-2">
               <span className="h-px flex-1 bg-line" />
@@ -271,9 +327,7 @@ export function HelpCenterDrawer() {
           </div>
           <div className="mt-2 text-xs text-muted">Ответы — ИИ по документации раздела. Без OPENAI_API_KEY отвечает по фактам системы.</div>
         </div>
-      </div>
-    </div>,
-    document.body,
+    </aside>
   )
 }
 

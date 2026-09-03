@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import type {
-  AppData, UserState, Locale, Theme, AccountStatus, BackgroundTask, LogLevel, Proxy,
+  AppData, UserState, Locale, Theme, AccountStatus, BackgroundTask, LogLevel, Proxy, TgAccount,
 } from '@/shared/types'
 import { cloneSeed } from './seeds'
 import { uid } from '@/shared/lib/utils'
@@ -13,21 +13,46 @@ export interface Toast {
   desc?: string
 }
 
-const LS_KEY = 'ai-incubator:v2'
+// v3: сброс старого демо-кэша (фейковые задачи/статистика/тикеты убраны из сидов).
+const LS_KEY = 'ai-incubator:v3'
 
+/**
+ * Что переживает перезагрузку страницы.
+ *
+ * MR-186 (аудит локальных хранилищ 27.08): раньше сюда клали ещё и `data` — тариф, монеты,
+ * задачи, тикеты, прокси, уведомления и ИМЯ С ПОЧТОЙ пользователя. Выход из аккаунта это
+ * не чистил (logout убирает только токен и сессию), поэтому на общем компьютере следующий
+ * человек при загрузке видел данные предыдущего, пока не придёт ответ сервера. Со своего
+ * второго устройства он их, наоборот, не видел вовсе — и решал, что данные пропали.
+ *
+ * Теперь в браузере живут ТОЛЬКО настройки отображения: язык, тема и режим демо-состояния.
+ * Всё остальное приходит с сервера при каждом заходе — это и есть общая база.
+ */
 interface Persisted {
   userState: UserState
   locale: Locale
   theme: Theme
   netErrors: boolean
-  data: AppData
 }
 
 interface AppStore extends Persisted {
+  /**
+   * Данные кабинета живут в ПАМЯТИ страницы и приходят с сервера при каждом заходе.
+   * В `Persisted` их намеренно нет: в браузере им не место (см. комментарий выше).
+   */
+  data: AppData
   sidebarCollapsed: boolean
   mobileNavOpen: boolean
   toasts: Toast[]
   accountsLoading: boolean
+  /**
+   * MR-203: приехали ли НАСТОЯЩИЕ аккаунты с сервера.
+   *
+   * `accountsLoading` для этого не годится: он false и ДО загрузки, и ПОСЛЕ, а до
+   * загрузки в `data` лежат демонстрационные сиды. Экран, который отличает «ещё не
+   * знаю» от «знаю, что ноль», обязан смотреть сюда.
+   */
+  accountsLoaded: boolean
 
   setUserState: (s: UserState) => void
   setLocale: (l: Locale) => void
@@ -49,7 +74,8 @@ interface AppStore extends Persisted {
   restoreAccount: (id: string) => Promise<void>
   emptyTrash: () => Promise<void>
   setAccountStatus: (id: string, status: AccountStatus) => Promise<void>
-  setAccountProxy: (id: string, proxy: string) => Promise<void>
+  /** MR-290: прокси назначается ССЫЛКОЙ на каталог; `null` — снять прокси. */
+  setAccountProxy: (id: string, proxyId: string | null) => Promise<void>
 
   addProxy: (p: Omit<Proxy, 'id' | 'usedBy' | 'status'>) => void
   removeProxy: (id: string) => void
@@ -60,6 +86,7 @@ interface AppStore extends Persisted {
 
   updateUser: (patch: Partial<AppData['user']>) => void
   toggleNotification: (id: string) => void
+  addTicket: (t: import('@/shared/types').Ticket) => void
 }
 
 function parseInitialState(): UserState {
@@ -91,13 +118,11 @@ const initialState = boot?.userState ?? parseInitialState()
 
 export const useApp = create<AppStore>((set, get) => {
   const persist = () => {
-    const { userState, locale, theme, netErrors, data } = get()
-    const { accounts: _a, ...restData } = data
+    const { userState, locale, theme, netErrors } = get()
     try {
-      localStorage.setItem(LS_KEY, JSON.stringify({
-        userState, locale, theme, netErrors,
-        data: { ...restData, accounts: [] },
-      }))
+      // Данные кабинета (тариф, монеты, задачи, тикеты, прокси, имя и почта) в браузер НЕ
+      // кладём: выход их не чистил, и на общем компьютере они доставались следующему.
+      localStorage.setItem(LS_KEY, JSON.stringify({ userState, locale, theme, netErrors }))
     } catch {
       /* ignore quota */
     }
@@ -112,11 +137,12 @@ export const useApp = create<AppStore>((set, get) => {
     locale: boot?.locale ?? 'ru',
     theme: boot?.theme ?? 'dark',
     netErrors: boot?.netErrors ?? false,
-    data: boot?.data ? { ...boot.data, accounts: [] } : dataFor(initialState),
+    data: dataFor(initialState),
     sidebarCollapsed: false,
     mobileNavOpen: false,
     toasts: [],
     accountsLoading: false,
+    accountsLoaded: false,
 
     setUserState: (s) => {
       mutate(() => ({ userState: s, data: dataFor(s) }))
@@ -160,7 +186,7 @@ export const useApp = create<AppStore>((set, get) => {
       set({ accountsLoading: true })
       try {
         const accounts = await fetchAccounts()
-        mutate((st) => ({ data: { ...st.data, accounts } }))
+        mutate((st) => ({ data: { ...st.data, accounts }, accountsLoaded: true }))
       } catch (e) {
         get().pushToast({
           type: 'error',
@@ -209,10 +235,17 @@ export const useApp = create<AppStore>((set, get) => {
       await patchAccount(id, { status })
       await get().loadAccounts()
     },
-    setAccountProxy: async (id, proxy) => {
+    setAccountProxy: async (id, proxyId) => {
       if (!get().guardNet('смена прокси')) return
-      await patchAccount(id, { proxy })
-      await get().loadAccounts()
+      /*
+       * Обновляем ОДНУ карточку, а не весь парк (правка 27.08: «очень долго обновляется
+       * прокси, нажимаю сохранить и прям долго обновляет»). Сервер и так возвращает
+       * изменённый аккаунт — перезагружать ради него сотню остальных незачем.
+       */
+      const updated = await patchAccount(id, { proxyId })
+      const acc = (updated as { account?: TgAccount })?.account
+      if (acc) mutate((st) => ({ data: { ...st.data, accounts: st.data.accounts.map((a) => (a.id === id ? acc : a)) } }))
+      else await get().loadAccounts() // старый ответ без тела — на всякий случай как раньше
     },
 
     addProxy: (p) =>
@@ -234,6 +267,7 @@ export const useApp = create<AppStore>((set, get) => {
       mutate((st) => ({ data: { ...st.data, tasks: st.data.tasks.filter((x) => x.id !== id) } })),
 
     updateUser: (patch) => mutate((st) => ({ data: { ...st.data, user: { ...st.data.user, ...patch } } })),
+    addTicket: (t) => mutate((st) => ({ data: { ...st.data, tickets: [t, ...st.data.tickets] } })),
     toggleNotification: (id) =>
       mutate((st) => ({
         data: {
@@ -248,9 +282,21 @@ export const useApp = create<AppStore>((set, get) => {
 export const activeAccounts = (d: AppData) => d.accounts.filter((a) => !a.inTrash)
 export const trashedAccounts = (d: AppData) => d.accounts.filter((a) => a.inTrash)
 
+// §6.3 (AM-002 / NOTIFY-001): «нерабочий» аккаунт — мёртвый прокси (proxyOk===false),
+// ОТСУТСТВУЮЩИЙ прокси (MR-132: без прокси = высокий риск бана, не для запуска) или статус,
+// из которого не запустишь. Общий предикат для пикера аккаунтов и колокольчика в шапке.
+export const BROKEN_ACCOUNT_STATUS = new Set<string>(['reauth', 'invalid', 'spamblock', 'quarantine', 'frozen'])
+export const isBrokenAccount = (a: { proxyOk?: boolean; noProxy?: boolean; status: string }) =>
+  a.proxyOk === false || a.noProxy === true || BROKEN_ACCOUNT_STATUS.has(a.status)
+/** MR-132: причина «нерабочести» — именно прокси (мёртвый или отсутствует)? Тогда чиним переходом в Менеджер→Прокси. */
+export const hasProxyIssue = (a: { proxyOk?: boolean; noProxy?: boolean }) => a.proxyOk === false || a.noProxy === true
+
 export const STATUS_META: Record<AccountStatus, { label: string; text: string; bg: string; dot: string }> = {
   active: { label: 'Активные', text: 'text-spark-300', bg: 'bg-spark-500/12 border-spark-500/30', dot: 'bg-spark-400' },
   working: { label: 'В работе', text: 'text-iris-300', bg: 'bg-iris-500/12 border-iris-500/30', dot: 'bg-iris-400' },
+  warming: { label: 'Прогрев', text: 'text-orange-300', bg: 'bg-orange-500/12 border-orange-500/30', dot: 'bg-orange-400' },
+  pause: { label: 'На паузе', text: 'text-slate-300', bg: 'bg-slate-500/12 border-slate-500/30', dot: 'bg-slate-400' },
+  floodwait: { label: 'FloodWait', text: 'text-yellow-300', bg: 'bg-yellow-500/12 border-yellow-500/30', dot: 'bg-yellow-400' },
   quarantine: { label: 'На карантине', text: 'text-amber-300', bg: 'bg-amber-500/12 border-amber-500/30', dot: 'bg-amber-400' },
   spamblock: { label: 'Спамблок', text: 'text-rose-300', bg: 'bg-rose-500/12 border-rose-500/30', dot: 'bg-rose-400' },
   invalid: { label: 'Невалидные', text: 'text-slate-300', bg: 'bg-slate-500/12 border-slate-500/30', dot: 'bg-slate-400' },

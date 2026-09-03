@@ -1,29 +1,47 @@
 import { useEffect, useState } from 'react'
-import { Star, Sparkles, Check, RotateCcw, Pencil } from 'lucide-react'
+import { Sparkles, Check, RotateCcw, Pencil } from 'lucide-react'
 import { cn } from '@/shared/lib/utils'
 import { Modal } from '@/shared/ui'
-import { DEFAULT_PROMPT_BODIES, loadPromptBodies, savePromptBodies } from './promptDefaults'
+import { DEFAULT_PROMPT_BODIES } from './promptDefaults'
+import { fetchAiSettings } from '@/api/featuresApi'
 
 interface PromptCardsProps {
-  moduleKey: string
   labels: string[]
   activeIndex: number
   onActiveChange: (index: number) => void
-  onBodiesChange?: (bodies: string[]) => void
+  /** Тексты карточек — приходят сверху, из единственного места хранения. */
+  bodies: string[]
+  /** Сохранить набор целиком (уедет в базу под текущего пользователя). */
+  /**
+   * Сохранить ОДНУ карточку. Раньше отдавали весь набор с экрана — и после применения
+   * чужого шаблона правка одной карточки уносила к человеку остальные пять чужих
+   * текстов поверх его собственных.
+   */
+  onSaveCard: (index: number, text: string) => void | Promise<void>
 }
 
-export function PromptCards({ moduleKey, labels, activeIndex, onActiveChange, onBodiesChange }: PromptCardsProps) {
-  const [bodies, setBodies] = useState(() => loadPromptBodies(moduleKey, labels))
+/**
+ * MR-185: карточки промптов — ТОЛЬКО отображение и редактор. Своей копии текстов у них
+ * больше нет.
+ *
+ * Раньше компонент подгружал тексты сам (из памяти браузера) и отдавал их наверх. Из-за
+ * этой второй копии применение шаблона не возвращало промпт: шаблон выставлял текст, а
+ * карточки тут же перекрывали его своим локальным (MR-176). Теперь набор приходит
+ * сверху, из единственного места хранения.
+ */
+export function PromptCards({ labels, activeIndex, onActiveChange, bodies, onSaveCard }: PromptCardsProps) {
   const [modalIndex, setModalIndex] = useState<number | null>(null)
   const [draft, setDraft] = useState('')
-
+  // §9 (PROMPT-001): «Активный промпт» показывает ПОЛНЫЙ итоговый текст — глобальный
+  // системный промпт + промпт карточки (на бэкенде их объединяет resolveSystemPrompt).
+  // Слушаем 'ai-settings-changed', чтобы превью обновлялось сразу после сохранения глобального.
+  const [globalPrompt, setGlobalPrompt] = useState('')
   useEffect(() => {
-    setBodies(loadPromptBodies(moduleKey, labels))
-  }, [moduleKey, labels.length])
-
-  useEffect(() => {
-    onBodiesChange?.(bodies)
-  }, [bodies, onBodiesChange])
+    const load = () => { void fetchAiSettings().then((s) => setGlobalPrompt(s.globalSystemPrompt || '')).catch(() => {}) }
+    load()
+    window.addEventListener('ai-settings-changed', load)
+    return () => window.removeEventListener('ai-settings-changed', load)
+  }, [])
 
   const isCustom = (i: number) =>
     (bodies[i] ?? '') !== (DEFAULT_PROMPT_BODIES[i] ?? DEFAULT_PROMPT_BODIES[0])
@@ -39,10 +57,7 @@ export function PromptCards({ moduleKey, labels, activeIndex, onActiveChange, on
 
   const saveEdit = () => {
     if (modalIndex === null) return
-    const next = [...bodies]
-    next[modalIndex] = draft.trim() || DEFAULT_PROMPT_BODIES[modalIndex] || DEFAULT_PROMPT_BODIES[0]
-    setBodies(next)
-    savePromptBodies(moduleKey, next)
+    void onSaveCard(modalIndex, draft)
     closeModal()
   }
 
@@ -59,15 +74,17 @@ export function PromptCards({ moduleKey, labels, activeIndex, onActiveChange, on
       <div className="space-y-3">
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
           {labels.map((label, i) => (
-            <div
-              key={label}
-              className={cn(
-                'relative rounded-xl border transition-all',
-                i === activeIndex
-                  ? 'border-spark-500/60 bg-spark-500/8 ring-1 ring-spark-500/30'
-                  : 'border-line bg-elevated',
-              )}
-            >
+            // Рамка у всех карточек одинаковая, и выделения активной здесь нет.
+            // Какой тип применится, решает НЕ выбор карточки, а «Распределение типов»
+            // ниже: воркер кидает взвешенный жребий на каждое действие. Сначала убрали
+            // зелёную рамку со звездой (26.08) — обещала приоритет; следом белую рамку
+            // (MR-198) — читалась как «выбрано». Любая рамка вокруг одной карточки
+            // означает выбор, поэтому цвет тут не подобрать: правильного нет.
+            //
+            // Какая карточка в предпросмотре, видно двумя способами без обещаний:
+            // подпись активной ярче (text-fg против text-muted) и её название
+            // напечатано в самой панели предпросмотра ниже.
+            <div key={label} className="relative rounded-xl border border-line bg-elevated transition-all">
               <button
                 type="button"
                 onClick={() => selectPrompt(i)}
@@ -76,10 +93,7 @@ export function PromptCards({ moduleKey, labels, activeIndex, onActiveChange, on
                   i === activeIndex ? 'text-fg' : 'text-muted hover:text-fg',
                 )}
               >
-                {i === activeIndex && (
-                  <Star size={12} className="absolute right-2 top-2 text-amber-400" fill="currentColor" />
-                )}
-                {isCustom(i) && i !== activeIndex && (
+                {isCustom(i) && (
                   <span className="absolute right-2 top-2 h-1.5 w-1.5 rounded-full bg-iris-400" title="Изменён" />
                 )}
                 {label}
@@ -99,7 +113,7 @@ export function PromptCards({ moduleKey, labels, activeIndex, onActiveChange, on
 
         <div className="rounded-xl border border-line bg-elevated/40 px-4 py-3">
           <div className="mb-1 flex items-center gap-2">
-            <span className="text-xs font-bold uppercase tracking-wide text-muted">Активный промпт</span>
+            <span className="text-xs font-bold uppercase tracking-wide text-muted">Предпросмотр промпта</span>
             {isCustom(activeIndex) && (
               <span className="rounded bg-iris-500/15 px-1.5 py-0.5 text-[10px] font-bold uppercase text-iris-300">
                 изменён
@@ -107,7 +121,18 @@ export function PromptCards({ moduleKey, labels, activeIndex, onActiveChange, on
             )}
           </div>
           <p className="text-sm font-semibold text-fg">{labels[activeIndex]}</p>
-          <p className="mt-1 line-clamp-2 text-sm leading-relaxed text-muted">{activeBody}</p>
+          <p className="mt-0.5 text-[11px] text-white/35">
+            Это просто просмотр текста. Какой тип применится, решает «Распределение типов» ниже —
+            жребий по весам на каждое действие.
+          </p>
+          {/* §9 (PROMPT-001): полный итоговый промпт — сперва глобальный системный (если задан), затем карточка. */}
+          {globalPrompt && (
+            <div className="mt-1.5 rounded-lg border border-iris-500/25 bg-iris-500/8 px-2.5 py-1.5">
+              <div className="text-[10px] font-bold uppercase tracking-wide text-iris-300">Глобальный системный промпт</div>
+              <p className="mt-0.5 whitespace-pre-wrap text-xs leading-relaxed text-muted">{globalPrompt}</p>
+            </div>
+          )}
+          <p className="mt-1.5 whitespace-pre-wrap text-sm leading-relaxed text-muted">{activeBody}</p>
         </div>
       </div>
 
@@ -156,7 +181,4 @@ export function PromptCards({ moduleKey, labels, activeIndex, onActiveChange, on
   )
 }
 
-export function usePromptBodies(moduleKey: string, labels: string[]) {
-  const [bodies, setBodies] = useState(() => loadPromptBodies(moduleKey, labels))
-  return { bodies, setBodies }
-}
+

@@ -1,0 +1,293 @@
+/**
+ * Кошельки пер-юзерные (§5.1, B2). Проверяем то, ради чего это переделывали:
+ * один клиент не тратит монеты другого, и монеты уже начисленные до перехода
+ * на пер-юзерное хранение не пропадают при первом же списании.
+ */
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import fs from 'fs/promises'
+import os from 'os'
+import path from 'path'
+
+const tmp = () => path.join(os.tmpdir(), `bal-${process.pid}-${Math.random().toString(36).slice(2)}.json`)
+
+async function fresh() {
+  process.env.BALANCE_FILE = tmp()
+  await fs.rm(process.env.BALANCE_FILE, { force: true })
+  // Импорт один раз на процесс — путь читается функцией, поэтому смена env работает.
+  return import('../balance.js')
+}
+
+test('баланс раздельный: списание у одного не трогает другого', async () => {
+  const B = await fresh()
+  await B.changeCoins(100, 'пополнение', 'usr_a')
+  await B.changeCoins(5, 'пополнение', 'usr_b')
+  await B.changeCoins(-30, 'ИИ', 'usr_a')
+  assert.equal((await B.getBalance('usr_a')).coins, 70)
+  assert.equal((await B.getBalance('usr_b')).coins, 5)
+})
+
+test('в минус не уходим — правило «при нуле модули стоят» иначе непроверяемо', async () => {
+  const B = await fresh()
+  await B.changeCoins(2, 'пополнение', 'usr_c')
+  await B.changeCoins(-50, 'ИИ', 'usr_c')
+  assert.equal((await B.getBalance('usr_c')).coins, 0)
+  assert.equal(await B.hasCoins(1, 'usr_c'), false)
+})
+
+test('тариф тоже свой у каждого', async () => {
+  const B = await fresh()
+  await B.setPlan('pro', 'usr_a')
+  await B.setPlan('none', 'usr_b')
+  assert.equal((await B.getBalance('usr_a')).plan.accountLimit, 200)
+  assert.equal((await B.getBalance('usr_b')).plan.accountLimit, 3)
+})
+
+test('старый общий кошелёк не теряется: читается как баланс по умолчанию', async () => {
+  const B = await fresh()
+  await fs.writeFile(process.env.BALANCE_FILE, JSON.stringify({ planId: 'pro', coins: 79.93 }), 'utf8')
+  assert.equal((await B.getBalance()).coins, 79.93)
+  assert.equal((await B.getBalance()).planId, 'pro')
+  // После первого списания формат перепишется на пер-юзерный — монеты должны уцелеть.
+  await B.changeCoins(-0.93, 'ИИ')
+  assert.equal((await B.getBalance()).coins, 79)
+  const raw = JSON.parse(await fs.readFile(process.env.BALANCE_FILE, 'utf8'))
+  assert.equal(raw.coins, undefined, 'старый корневой формат должен быть вычищен')
+  assert.equal(raw[B.DEFAULT_USER].coins, 79)
+})
+
+test('запрос без пользователя не забирает монеты у клиента', async () => {
+  const B = await fresh()
+  await B.changeCoins(10, 'пополнение', 'usr_a')
+  await B.changeCoins(-10, 'фоновая задача без владельца')
+  assert.equal((await B.getBalance('usr_a')).coins, 10)
+  assert.equal((await B.getBalance()).coins, 0)
+})
+
+/**
+ * Подписка на модули. Заказчик (23.07): «вибирає собі модулі які хоче, сума
+ * сумується і оплачується в кабінеті — доступ тільки до них».
+ */
+test('открыты только оплаченные модули', async () => {
+  const B = await fresh()
+  await B.setUserModules(['neuro-chatting', 'mailing'], 'usr_x')
+  const { modules } = await B.getBalance('usr_x')
+  assert.deepEqual(modules, ['neuro-chatting', 'mailing'])
+  assert.equal(B.modulesAllow(modules, 'neuro-chatting'), true)
+  assert.equal(B.modulesAllow(modules, 'mailing'), true)
+  assert.equal(B.modulesAllow(modules, 'neuro-commenting'), false, 'за него не платили')
+})
+
+/**
+ * Решение 18.08 (отменяет прежнее «пока набор не выбран — открыто всё»).
+ *
+ * Прежнее правило берегло клиентов при выкатке, когда пространство было одно — наше.
+ * С самостоятельными регистрациями оно стало раздачей: КАЖДЫЙ, у кого нет своей записи,
+ * получал общий набор пространства. На проде так жили 56 из 65 аккаунтов, и новый
+ * зарегистрированный видел все 14 модулей, не заплатив ничего.
+ */
+test('нет своей подписки — нет модулей: набор пространства не раздаётся всем подряд', async () => {
+  const B = await fresh()
+  await B.setModules(['mailing', 'warming'], 'usr_owner') // общий набор пространства
+  const { modules } = await B.getBalance('usr_new')
+  assert.deepEqual(modules, [], 'чужой человек не получает наш набор просто фактом регистрации')
+  assert.equal(B.modulesAllow(modules, 'mailing'), false)
+})
+
+test('дев без сессии по-прежнему работает с общим набором', async () => {
+  const B = await fresh()
+  await B.setModules('all', undefined, {})
+  const { modules } = await B.getBalance() // нет userId — локальный запуск/демо
+  assert.equal(modules, 'all', 'иначе дев-режим остался бы без модулей')
+})
+
+/**
+ * Подписка — на всё пространство, монеты — у каждого свои. Пока подписку хранили
+ * пер-юзерно, у сотрудника не было своей записи, он получал 'all' и запускал все
+ * 14 модулей при двух оплаченных.
+ */
+test('модули берутся из своей подписки, а монеты — свои у каждого', async () => {
+  const B = await fresh()
+  await B.setUserModules(['mailing'], 'usr_owner')
+  await B.changeCoins(10, 'пополнение', 'usr_owner')
+
+  assert.deepEqual((await B.getBalance('usr_owner')).modules, ['mailing'])
+  assert.equal((await B.getBalance('usr_owner')).coins, 10)
+  // Посторонний (не суб этого владельца) не получает ни его модулей, ни его монет.
+  // Наследование набора СУБОМ от владельца проверяется в subUsers.test.js — там есть
+  // настоящая связь parentId, а здесь у id нет профиля вовсе.
+  assert.deepEqual((await B.getBalance('usr_worker')).modules, [])
+  assert.equal((await B.getBalance('usr_worker')).coins, 0)
+})
+
+test('дубли в выборе схлопываются', async () => {
+  const B = await fresh()
+  await B.setUserModules(['mailing', 'mailing', 'warming'], 'usr_c')
+  assert.deepEqual((await B.getBalance('usr_c')).modules, ['mailing', 'warming'])
+})
+
+/**
+ * §5.3: сумма монет по всем кошелькам — для админ-панели. После пер-юзерного
+ * рефактора getBalance() без id возвращал пустой __default, и статистика
+ * показывала ноль вместо реальной суммы.
+ */
+test('totalCoins: сумма по всем пользователям, служебные ключи не в счёт', async () => {
+  const B = await fresh()
+  await B.changeCoins(10, 'x', 'usr_a')
+  await B.changeCoins(5.5, 'x', 'usr_b')
+  await B.setModules(['mailing'], 'usr_a') // пишет __subscription — не должен попасть в сумму
+  await B.changeCoins(1, 'x') // __default — в сумму монет идёт, но не считается кошельком
+
+  const t = await B.totalCoins()
+  // Служебный кошелёк идёт ОТДЕЛЬНЫМ полем: попадая в общую сумму, он разводил
+  // «Монет в системе» с итогом «На счету» в таблице людей — две цифры про одно.
+  assert.equal(t.coins, 15.5, 'только людские кошельки: 10 + 5.5')
+  assert.equal(t.wallets, 2, 'usr_a и usr_b')
+  assert.equal(t.service, 1, 'служебный __default виден, но не смешан с людьми')
+})
+
+/**
+ * Личная покупка клиента перекрывает общий набор — но только для него.
+ * «Тестовий акаунт зайшов, вибрав пакет» — остальное пространство не задето.
+ */
+test('свой набор перекрывает общий, соседи не задеты', async () => {
+  const B = await fresh()
+  await B.setUserModules(['mailing'], 'usr_owner')
+  await B.setUserModules(['neuro-chatting'], 'usr_client')
+
+  assert.deepEqual((await B.getBalance('usr_client')).modules, ['neuro-chatting'], 'клиент видит купленное лично')
+  assert.deepEqual((await B.getBalance('usr_owner')).modules, ['mailing'], 'владелец не задет чужой покупкой')
+  assert.deepEqual((await B.getBalance('usr_worker')).modules, [], 'третий не получает ни того, ни другого')
+
+  // Смена своего набора соседей не трогает.
+  await B.setUserModules(['warming'], 'usr_owner')
+  assert.deepEqual((await B.getBalance('usr_client')).modules, ['neuro-chatting'])
+  assert.deepEqual((await B.getBalance('usr_owner')).modules, ['warming'])
+})
+
+/**
+ * §11.4: деньги и токены — два независимых остатка.
+ *
+ * Модель владельца (30.07): «$ — основное, за них покупаем подписки и токены;
+ * токены тратятся на действия в модулях». Раньше кошелёк был один, и доллар был
+ * лишь пересчётом монет по курсу — на такой модели «докупить токенов» не выразить.
+ */
+test('§11.4: покупка токенов списывает деньги и начисляет токены', async () => {
+  const B = await fresh()
+  await B.changeUsd(100, 'пополнение', 'usr_m')
+
+  const before = await B.getBalance('usr_m')
+  assert.equal(before.usd, 100, 'деньги зачислены')
+  assert.equal(before.coins, 0, 'токены отдельно и пока пусты')
+
+  const out = await B.buyTokens({ usd: 20, userId: 'usr_m' })
+  assert.ok(out.tokens > 0, 'токены начислены')
+  assert.equal(out.spentUsd, 20)
+
+  const after = await B.getBalance('usr_m')
+  assert.equal(after.usd, 80, 'деньги уменьшились ровно на потраченное')
+  assert.equal(after.coins, out.tokens, 'токены выросли ровно на купленное')
+})
+
+test('§11.4: не хватает денег — ни списания, ни начисления', async () => {
+  const B = await fresh()
+  await B.changeUsd(5, 'пополнение', 'usr_p')
+  await assert.rejects(() => B.buyTokens({ usd: 50, userId: 'usr_p' }), /Недостаточно средств/)
+
+  const bal = await B.getBalance('usr_p')
+  assert.equal(bal.usd, 5, 'деньги на месте')
+  assert.equal(bal.coins, 0, 'токены не начислены')
+
+  // Ноль и мусор тоже не проходят: иначе «купил на 0» плодил бы записи в журнале.
+  await assert.rejects(() => B.buyTokens({ usd: 0, userId: 'usr_p' }), /больше нуля/)
+  await assert.rejects(() => B.buyTokens({ usd: -10, userId: 'usr_p' }), /больше нуля/)
+})
+
+/**
+ * Баг 19.08 (§2): ПОКУПКА МОДУЛЯ ЗАТИРАЛА НАБОР.
+ *
+ * `setUserModules` писала `modules = list` целиком и доверяла полному списку от клиента.
+ * Кабинет делал пред-мердж сам, но кнопка «Готовый набор» подставляла ровно модули
+ * набора — и ранее оплаченные исчезали: деньги списаны, доступа нет. Объединять обязан
+ * сервер. При этом ЗАМЕНА набора должна остаться: админка выдаёт доступы явно и должна
+ * уметь снимать лишнее — поэтому режим передаётся параметром, а не угадывается.
+ */
+test('докупка (merge): ранее оплаченные модули остаются', async () => {
+  const B = await fresh()
+  await B.setUserModules(['mailing'], 'usr_m1', { months: 1, mode: 'merge' })
+  // Клиент прислал «Готовый набор» без mailing — сервер не имеет права его потерять.
+  await B.setUserModules(['parsing', 'neuro-commenting'], 'usr_m1', { months: 1, mode: 'merge' })
+  assert.deepEqual(
+    (await B.getBalance('usr_m1')).modules,
+    ['mailing', 'parsing', 'neuro-commenting'],
+    'оплаченный mailing остался, новые добавились',
+  )
+})
+
+test('замена (replace): выдача доступов админом снимает лишнее', async () => {
+  const B = await fresh()
+  await B.setUserModules(['mailing', 'parsing'], 'usr_m2', {})
+  await B.setUserModules(['parsing'], 'usr_m2', { mode: 'replace' })
+  assert.deepEqual((await B.getBalance('usr_m2')).modules, ['parsing'], 'админ должен уметь снять модуль')
+  // Умолчание — тоже замена: смысл старых вызовов (админка, тесты) не меняется.
+  await B.setUserModules(['warming'], 'usr_m2')
+  assert.deepEqual((await B.getBalance('usr_m2')).modules, ['warming'])
+})
+
+test('докупка «всего» и докупка к «всему» не ломают набор', async () => {
+  const B = await fresh()
+  await B.setUserModules(['mailing'], 'usr_m6', { mode: 'merge' })
+  await B.setUserModules('all', 'usr_m6', { mode: 'merge' })
+  assert.equal((await B.getBalance('usr_m6')).modules, 'all')
+  await B.setUserModules(['warming'], 'usr_m6', { mode: 'merge' })
+  assert.equal((await B.getBalance('usr_m6')).modules, 'all', 'у кого всё — докупать нечего')
+})
+
+test('докупка не укорачивает уже оплаченный срок', async () => {
+  const B = await fresh()
+  await B.setUserModules(['mailing'], 'usr_m3', { months: 12, mode: 'merge' })
+  const year = (await B.getBalance('usr_m3')).expiresAt
+  await B.setUserModules(['warming'], 'usr_m3', { months: 1, mode: 'merge' })
+  const after = await B.getBalance('usr_m3')
+  assert.deepEqual(after.modules, ['mailing', 'warming'])
+  assert.equal(after.expiresAt, year, 'оплаченный год не схлопывается до месяца из-за докупки')
+})
+
+test('докупка без периода не делает срочную подписку вечной', async () => {
+  const B = await fresh()
+  await B.setUserModules(['mailing'], 'usr_m4', { months: 1, mode: 'merge' })
+  const till = (await B.getBalance('usr_m4')).expiresAt
+  assert.ok(till > Date.now())
+  await B.setUserModules(['warming'], 'usr_m4', { mode: 'merge' })
+  assert.equal((await B.getBalance('usr_m4')).expiresAt, till, 'срок остался прежним, а не null')
+})
+
+/**
+ * Баг 19.08 (§3): оплаченный модуль можно было снять и «оплатить» повторно. Денег это
+ * не стоило (`addedCost` считает только добавленное), но модуль при этом снимался молча
+ * и без возврата. Серверная половина защиты — здесь; чекбокс заблокирован в кабинете.
+ */
+test('повторная оплата уже купленного: ноль к списанию и никаких дублей', async () => {
+  const B = await fresh()
+  const { addedCost } = await import('../pricing.js')
+  await B.setUserModules(['mailing'], 'usr_m5', { months: 1, mode: 'merge' })
+
+  const had = (await B.getBalance('usr_m5')).modules
+  assert.deepEqual(addedCost(had, ['mailing']), { added: [], monthly: 0 }, 'за оплаченное второй раз не берём')
+
+  await B.setUserModules(['mailing'], 'usr_m5', { months: 1, mode: 'merge' })
+  assert.deepEqual((await B.getBalance('usr_m5')).modules, ['mailing'], 'дубль в наборе не появляется')
+  // Пустой список в режиме докупки — не способ «обнулить» подписку.
+  await B.setUserModules([], 'usr_m5', { mode: 'merge' })
+  assert.deepEqual((await B.getBalance('usr_m5')).modules, ['mailing'], 'докупкой набор не снимают')
+})
+
+test('§11.4: кошельки не пересекаются между юзерами', async () => {
+  const B = await fresh()
+  await B.changeUsd(50, 'пополнение', 'usr_x')
+  await B.changeUsd(10, 'пополнение', 'usr_y')
+  await B.buyTokens({ usd: 10, userId: 'usr_x' })
+
+  assert.equal((await B.getBalance('usr_y')).usd, 10, 'чужие деньги не тронуты')
+  assert.equal((await B.getBalance('usr_y')).coins, 0, 'чужие токены не начислены')
+})

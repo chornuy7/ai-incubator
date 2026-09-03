@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useApp } from '@/mocks/store'
+import { launchWithSkip } from './launchWithSkip'
+import { ApiError } from '@/api/client'
 import {
   startModuleTask,
   fetchModuleTask,
@@ -10,9 +12,11 @@ import {
   deleteModulePreset,
   type ModuleTask,
   type ModuleTaskSettings,
+  type ModulePresetSettings,
   type ModulePreset,
 } from '@/api/modulesApi'
 import { persistActiveTaskId, readActiveTaskId, pickTaskIdToRestore, mapTaskStatus } from './activeTaskStorage'
+import { promptDialog } from '@/shared/lib/dialog'
 
 export function useModuleTask(moduleKey: string) {
   const addTask = useApp((s) => s.addTask)
@@ -27,6 +31,7 @@ export function useModuleTask(moduleKey: string) {
   const [starting, setStarting] = useState(false)
   const [restoring, setRestoring] = useState(true)
   const [presets, setPresets] = useState<ModulePreset[]>([])
+  const [justStarted, setJustStarted] = useState<ModuleTask | null>(null) // для поп-апа «задача запущена»
 
   const running = task?.status === 'running' || task?.status === 'queued'
 
@@ -103,7 +108,16 @@ export function useModuleTask(moduleKey: string) {
     if (!guardNet(`запуск ${moduleKey}`)) return false
     setStarting(true)
     try {
-      const t = await startModuleTask(moduleKey, settings)
+      // Часть аккаунтов в карантине/спамблоке — не валим запуск, а предлагаем без них:
+      // при трёх десятках профилей кто-то в блоке почти всегда.
+      const t = await launchWithSkip((skip) => startModuleTask(moduleKey, settings, skip))
+      if (!t) return false
+      // §4.4 (D4): риск волнового бана показываем сразу после запуска. Не блокируем —
+      // решение за оператором, — но молчать об этом нельзя: Telegram банит группами,
+      // и узнать о паттерне постфактум означает потерять сразу несколько профилей.
+      for (const w of (t as { clusterWarnings?: string[] }).clusterWarnings || []) {
+        pushToast({ type: 'error', title: 'Риск блокировки группой', desc: w })
+      }
       setTaskId(t.id)
       setTask(t)
       persistActiveTaskId(moduleKey, t.id)
@@ -116,11 +130,15 @@ export function useModuleTask(moduleKey: string) {
         accountsCount: settings.accountIds.length,
         logCount: 0,
       })
-      pushToast({ type: 'success', title: 'Задача запущена', desc: t.id })
+      setJustStarted(t) // показать поп-ап со ссылкой в Дашборд задач (там прогресс/логи/управление)
       void loadAccountBusy()
       return true
     } catch (e) {
-      pushToast({ type: 'error', title: 'Ошибка запуска', desc: e instanceof Error ? e.message : '' })
+      // 402 «нет монет» уже показан окном по центру (см. api/client) — второй тост
+      // в углу про то же самое только шумит.
+      if (!(e instanceof ApiError && e.status === 402)) {
+        pushToast({ type: 'error', title: 'Ошибка запуска', desc: e instanceof Error ? e.message : '' })
+      }
       return false
     } finally {
       setStarting(false)
@@ -141,11 +159,11 @@ export function useModuleTask(moduleKey: string) {
     }
   }, [taskId, moduleKey, syncBackgroundTask, pushToast, loadAccounts, loadAccountBusy])
 
-  const savePreset = useCallback(async (name: string, settings: ModuleTaskSettings) => {
-    await saveModulePreset(moduleKey, name, settings)
+  const savePreset = useCallback(async (name: string, settings: ModulePresetSettings, color?: string, owner?: string) => {
+    await saveModulePreset(moduleKey, name, settings, color, owner)
     const p = await fetchModulePresets(moduleKey)
     setPresets(p)
-    pushToast({ type: 'success', title: 'Пресет сохранён', desc: name })
+    pushToast({ type: 'success', title: 'Шаблон сохранён', desc: owner ? `${name} · ${owner}` : name })
   }, [moduleKey, pushToast])
 
   const deletePreset = useCallback(async (id: string) => {
@@ -160,5 +178,21 @@ export function useModuleTask(moduleKey: string) {
     }
   }, [moduleKey, presets, pushToast])
 
-  return { task, taskId, running, starting, restoring, start, stop, savePreset, deletePreset, presets, pushToast, guardNet }
+  // §7 (MR-108 · TPL-002): редактирование шаблона — переименование (настройки сохраняются:
+  // update-эндпоинта нет, поэтому пересоздаём с тем же settings/цветом/владельцем).
+  const editPreset = useCallback(async (p: ModulePreset) => {
+    const name = await promptDialog({ title: 'Переименовать шаблон', message: 'Новое название шаблона', placeholder: p.name })
+    if (!name || !name.trim() || name.trim() === p.name) return
+    try {
+      await deleteModulePreset(moduleKey, p.id)
+      await saveModulePreset(moduleKey, name.trim(), p.settings, p.color, p.owner)
+      setPresets(await fetchModulePresets(moduleKey))
+      pushToast({ type: 'success', title: 'Шаблон переименован', desc: name.trim() })
+    } catch (e) {
+      setPresets(await fetchModulePresets(moduleKey).catch(() => presets))
+      pushToast({ type: 'error', title: 'Не переименован', desc: e instanceof Error ? e.message : '' })
+    }
+  }, [moduleKey, presets, pushToast])
+
+  return { task, taskId, running, starting, restoring, start, stop, savePreset, deletePreset, editPreset, presets, pushToast, guardNet, justStarted, dismissJustStarted: () => setJustStarted(null) }
 }

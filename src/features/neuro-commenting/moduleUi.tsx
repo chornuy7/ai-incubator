@@ -1,8 +1,26 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { cn } from '@/shared/lib/utils'
-import { Switch } from '@/shared/ui'
+import { Switch, Tip } from '@/shared/ui'
 import { HelpCircle } from 'lucide-react'
 import { useUi } from '@/shared/lib/uiStore'
+
+/**
+ * §13: открыть Help по блоку модуля и удержать САМ БЛОК в поле зрения.
+ *
+ * Панель помощи — не оверлей, а колонка в потоке (`HelpCenterDrawer`): при открытии
+ * страница сужается и перевёрстывается, из-за чего блок, у которого нажали «?»,
+ * уезжает из вида — приходится искать его глазами и скроллить руками.
+ *
+ * Скроллим к блоку ПОСЛЕ перевёрстки: два кадра (state → render → layout), иначе
+ * посчитаем позицию по старой, ещё широкой раскладке и промахнёмся.
+ */
+export function revealHelpBlock(el: HTMLElement | null) {
+  if (!el) return
+  const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    el.scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'center' })
+  }))
+}
 
 /** Приводит ввод к целому в пределах [min, max]. */
 function clampInt(raw: number | string, min: number, max?: number) {
@@ -18,19 +36,26 @@ export function HelpButton({ topic, className }: { topic: string; className?: st
   const setHelpTopic = useUi((s) => s.setHelpTopic)
   const setHelpOpen = useUi((s) => s.setHelpOpen)
 
+  // Карточка блока, внутри которой стоит кнопка, — к ней возвращаем взгляд после
+  // открытия панели (у этой кнопки нет своей обёртки, поэтому ищем ближайшую .card).
+  const open = (el: HTMLElement | null) => {
+    setHelpTopic(topic)
+    setHelpOpen(true)
+    revealHelpBlock(el?.closest('.card') as HTMLElement | null)
+  }
+
   return (
     <span
       role="button"
       tabIndex={0}
       title="Help Center"
       aria-label="Help Center"
-      onClick={(e) => { e.stopPropagation(); setHelpTopic(topic); setHelpOpen(true) }}
+      onClick={(e) => { e.stopPropagation(); open(e.currentTarget) }}
       onKeyDown={(e) => {
         if (e.key !== 'Enter' && e.key !== ' ') return
         e.preventDefault()
         e.stopPropagation()
-        setHelpTopic(topic)
-        setHelpOpen(true)
+        open(e.currentTarget)
       }}
       className={cn(
         'grid h-8 w-8 shrink-0 cursor-pointer place-items-center rounded-xl bg-spark-gradient text-[#04150c] shadow-pop transition-transform hover:scale-[1.03]',
@@ -42,18 +67,27 @@ export function HelpButton({ topic, className }: { topic: string; className?: st
   )
 }
 
-export function SectionCard({ icon, title, badge, right, children }: {
-  icon: React.ReactNode; title: string; badge?: string; right?: React.ReactNode; children: React.ReactNode
+export function SectionCard({ icon, title, badge, right, required, children, id }: {
+  icon: React.ReactNode; title: string; badge?: string; right?: React.ReactNode
+  /** §11 (MR-54): пометить блок обязательным — визуально отделить от необязательных настроек. */
+  required?: boolean
+  children: React.ReactNode
+  /** Якорь для шагов мастера запуска: клик по шагу прокручивает к этому блоку. */
+  id?: string
 }) {
   const setHelpTopic = useUi((s) => s.setHelpTopic)
   const setHelpOpen = useUi((s) => s.setHelpOpen)
+  const rootRef = useRef<HTMLDivElement>(null)
 
+  // scroll-mt — чтобы липкая шапка не накрывала заголовок при переходе по якорю.
   return (
-    <div className="card p-0">
+    <div ref={rootRef} id={id} className="card scroll-mt-24 p-0">
       <div className="flex flex-wrap items-center gap-3 border-b border-line px-4 py-3.5">
         <span className="grid h-9 w-9 place-items-center rounded-xl bg-spark-500/12 text-spark-400">{icon}</span>
         <span className="font-display text-base font-bold text-fg">{title}</span>
+        {/* §12 (UI-004): счётчик (badge) — ДО отметки «обязательно». */}
         {badge && <span className="rounded-md bg-spark-500/12 px-2 py-0.5 text-xs font-bold text-spark-300">{badge}</span>}
+        {required && <span className="rounded-md bg-amber-500/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-300" title="Без этого блока запуск недоступен">обязательно</span>}
         <div className="ml-auto flex items-center gap-2">
           {right && <div>{right}</div>}
           <button
@@ -61,20 +95,23 @@ export function SectionCard({ icon, title, badge, right, children }: {
             className="grid h-8 w-8 place-items-center rounded-xl bg-spark-gradient text-[#04150c] shadow-pop transition-transform hover:scale-[1.03]"
             title="Help Center"
             aria-label="Help Center"
-            onClick={() => { setHelpTopic(title); setHelpOpen(true) }}
+            onClick={() => { setHelpTopic(title); setHelpOpen(true); revealHelpBlock(rootRef.current) }}
           >
             <HelpCircle size={16} />
           </button>
         </div>
       </div>
-      <div className="p-4">{children}</div>
+      {/* Не рендерим пустой padding-блок, если тело свёрнуто (children=false) */}
+      {children ? <div className="p-4">{children}</div> : null}
     </div>
   )
 }
 
-export function NumberField({ label, value, onChange, suffix, min = 0, max, step = 1 }: {
+export function NumberField({ label, value, onChange, suffix, min = 0, max, step = 1, hint }: {
   label: string; value: number; onChange: (n: number) => void; suffix?: string
   min?: number; max?: number; step?: number
+  /** Пояснение к полю: значок «?» у подписи, текст — по наведению. */
+  hint?: string
 }) {
   // Черновик строки позволяет свободно печатать; коммитим с валидацией на blur/Enter.
   const [draft, setDraft] = useState(String(value))
@@ -87,7 +124,10 @@ export function NumberField({ label, value, onChange, suffix, min = 0, max, step
   return (
     <div>
       <div className="mb-1 flex items-center justify-between">
-        <span className="text-sm text-muted">{label}</span>
+        <span className="flex items-center gap-1.5 text-sm text-muted">
+          {label}
+          {hint && <Tip text={hint}><HelpCircle size={13} className="cursor-help text-white/35" /></Tip>}
+        </span>
         {suffix && <span className="rounded bg-elevated px-1.5 text-xs font-bold text-spark-300">{suffix}</span>}
       </div>
       <div className="flex items-center gap-2">
@@ -96,6 +136,8 @@ export function NumberField({ label, value, onChange, suffix, min = 0, max, step
           type="text"
           inputMode="numeric"
           value={draft}
+          // Клик выделяет значение: иначе ввод дописывается к нулю — «012» вместо «12».
+          onFocus={(e) => e.currentTarget.select()}
           onChange={(e) => { if (/^\d*$/.test(e.target.value)) setDraft(e.target.value) }}
           onBlur={() => commit(draft)}
           onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commit(draft) } }}
@@ -155,17 +197,27 @@ export function LaunchStat({ icon, color, label, value, warn }: {
   )
 }
 
-export function DelayFields({ label, from, to, onFrom, onTo, unit }: {
-  label: string; from: number; to: number; onFrom: (n: number) => void; onTo: (n: number) => void; unit?: string
+/**
+ * Потолок паузы между действиями — час.
+ *
+ * Замечание владельца 26.08: в поля влезало сколько угодно (5670 с — полтора часа между
+ * комментариями). Задача с такой паузой не «осторожная», а сломанная: один аккаунт сделает
+ * пару действий за смену. Верх ограничиваем, низ уже связан парой «от/до».
+ */
+const MAX_DELAY_SEC = 3600
+
+export function DelayFields({ label, from, to, onFrom, onTo, unit, max = MAX_DELAY_SEC }: {
+  label: string; from: number; to: number; onFrom: (n: number) => void; onTo: (n: number) => void; unit?: string; max?: number
 }) {
   const u = unit ? ` ${unit}` : ''
   return (
     <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line/60 pb-3 last:border-0 last:pb-0">
       <span className="text-sm font-medium text-fg">{label}</span>
       <div className="flex items-center gap-2">
-        <Stepper value={from} onChange={onFrom} suffix={u} />
+        {/* #9: «от» не больше «до», «до» не меньше «от» — макс/мин связаны */}
+        <Stepper value={from} onChange={onFrom} suffix={u} max={Math.min(to, max)} />
         <span className="text-muted">до</span>
-        <Stepper value={to} onChange={onTo} suffix={u} />
+        <Stepper value={to} onChange={onTo} suffix={u} min={from} max={max} />
       </div>
     </div>
   )
@@ -189,6 +241,8 @@ function Stepper({ value, onChange, suffix, min = 0, max }: {
           type="text"
           inputMode="numeric"
           value={draft}
+          // Клик выделяет значение: иначе ввод дописывается к нулю — «012» вместо «12».
+          onFocus={(e) => e.currentTarget.select()}
           onChange={(e) => { if (/^\d*$/.test(e.target.value)) setDraft(e.target.value) }}
           onBlur={() => commit(draft)}
           onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commit(draft) } }}
@@ -202,13 +256,16 @@ function Stepper({ value, onChange, suffix, min = 0, max }: {
   )
 }
 
-export function SingleDelayField({ label, value, onChange, unit }: {
-  label: string; value: number; onChange: (n: number) => void; unit?: string
+export function SingleDelayField({ label, value, onChange, unit, min = 0, max = MAX_DELAY_SEC, hint }: {
+  label: string; value: number; onChange: (n: number) => void; unit?: string; min?: number; max?: number; hint?: string
 }) {
   return (
     <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line/60 pb-3 last:border-0 last:pb-0">
-      <span className="text-sm font-medium text-fg">{label}</span>
-      <Stepper value={value} onChange={onChange} suffix={unit ? ` ${unit}` : ''} />
+      <span className="text-sm font-medium text-fg">
+        {label}
+        {hint && <span className="mt-0.5 block text-[11px] font-normal text-faint">{hint}</span>}
+      </span>
+      <Stepper value={value} onChange={onChange} suffix={unit ? ` ${unit}` : ''} min={min} max={max} />
     </div>
   )
 }

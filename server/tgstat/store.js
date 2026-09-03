@@ -109,11 +109,23 @@ function importDto(imp) {
   return rest
 }
 
-export async function createImport({ category, region, max_pages, min_subscribers }) {
+/**
+ * Владелец импорта (`userId`) — кто его запустил.
+ *
+ * Импорты нумеруются подряд (1, 2, 3…), а роутер отдавал их по номеру без всякой
+ * проверки: сосед подставлял чужой id и выгружал его подборку каналов в CSV/XLSX или
+ * удалял её. Номер угадывается перебором за секунды, так что это была полностью
+ * открытая дверь.
+ *
+ * Импорты, сделанные до этого поля, остаются без владельца — их видит только админ
+ * (общее правило `ownedForRequest`).
+ */
+export async function createImport({ category, region, max_pages, min_subscribers, userId }) {
   await ensureDirs()
   const id = await nextImportId()
   const imp = {
     id,
+    userId: String(userId || '').trim() || '',
     category,
     region: region || null,
     max_pages: Math.max(1, Math.min(100, Number(max_pages) || 1)),
@@ -173,6 +185,21 @@ export async function cancelImport(id) {
     if (imp.status === 'queued') { imp.status = 'cancelled'; imp.finished_at = nowIso() }
     await saveImport(imp)
   }
+  return importDto(imp)
+}
+
+/**
+ * Дать импорту своё имя (правка 26.08, паритет с «Последними запросами» прямого парсера:
+ * «назвать можно было, переименовать тоже и удалить»). Пустое имя снимает название и
+ * возвращает подпись по категории — отдельной кнопки сброса не нужно.
+ */
+export async function renameImport(id, title) {
+  const imp = await loadImport(id)
+  if (!imp) return null
+  const name = String(title || '').trim().slice(0, 120)
+  if (name) imp.title = name
+  else delete imp.title
+  await saveImport(imp)
   return importDto(imp)
 }
 

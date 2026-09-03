@@ -28,8 +28,23 @@ export function seededTarget(min, max, seed = '') {
  */
 export function resolveTotalTarget(settings, task) {
   const max = settings.maxActions ?? settings.maxComments ?? 100
-  const min = settings.minActions ?? settings.minComments ?? 0
-  return seededTarget(min, max, task?.id || '')
+  /*
+   * Нет явного минимума — цель РАВНА максимуму (правка 27.08).
+   *
+   * Было ноль, и цель бралась жребием из [0, max]: «сделай 2 комментария» превращалось в
+   * «сделай от 1 до 2» и честно останавливалось на одном (владелец 27.08). У мейлинга и
+   * автопостинга общего числа нет вовсе — там жребий шёл от 0 до 100 по умолчанию, то есть
+   * рассылка могла остановиться на случайном месте списка.
+   *
+   * Разброс между аккаунтами даёт отдельный жребий resolvePerAccountTarget — вот там он к
+   * месту. А общее число человек называет явно, и занижать его молча нельзя: диапазон
+   * работает, только когда минимум задан РУКАМИ (как в нейродиалогах).
+   */
+  const min = settings.minActions ?? settings.minComments ?? max
+  const t = seededTarget(min, max, task?.id || '')
+  // Защита от «тихого нуля»: если задан положительный максимум, цель не может быть 0
+  // (иначе задача запускается и молча ничего не делает — при min=0 seed мог дать 0).
+  return max >= 1 ? Math.max(1, t) : t
 }
 
 /**
@@ -40,5 +55,22 @@ export function resolvePerAccountTarget(settings, accountId, task) {
   const max = settings.maxPerAccount || 0
   if (!max) return 0
   const min = settings.minPerAccount || 0
-  return seededTarget(min, max, `${task?.id || ''}:${accountId}`)
+  const seeded = seededTarget(min, max, `${task?.id || ''}:${accountId}`)
+
+  // Цель на аккаунт не должна делать НЕДОСТИЖИМОЙ общую цель задачи (правка 19.08).
+  //
+  // Прогон 19.08: «всего 2, на аккаунт 0–2», один аккаунт. Жребий дал ему 1, аккаунт
+  // сделал один комментарий и упёрся в свой лимит — задача завершилась со статусом
+  // «Готово» и прогрессом 1/2. Формально верно, по сути — задача не сделала того, что
+  // сама же обещала: два разных случайных числа противоречили друг другу.
+  //
+  // Поэтому поднимаем цель аккаунта минимум до его доли общей цели, но НЕ выше заданного
+  // максимума: максимум — прямое указание оператора, его перебивать нельзя. Если доля
+  // всё равно выше максимума (аккаунтов слишком мало), задача честно завершится, а
+  // воркер напишет, почему цель недостижима.
+  const accounts = Array.isArray(settings.accountIds) && settings.accountIds.length
+    ? settings.accountIds.length
+    : 1
+  const share = Math.ceil(resolveTotalTarget(settings, task) / accounts)
+  return Math.min(max, Math.max(seeded, share))
 }

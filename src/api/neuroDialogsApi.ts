@@ -10,6 +10,8 @@ export interface InboxDialog {
   username: string
   last: string
   time: string
+  /** Сырая отметка времени последнего сообщения (unix, сек) — для сортировки «новое сверху». */
+  ts?: number
   unread: number
   isBot?: boolean
   error?: boolean
@@ -35,6 +37,22 @@ export interface DialogMessage {
   time: string
   out: boolean
   date: number
+  /** §3: тип вложения, если оно есть. Само вложение не передаётся. */
+  media?: 'photo' | 'video' | 'sticker' | 'voice' | 'file'
+  /** §3: у сообщения есть миниатюра — её можно запросить `dialogMediaUrl()`. */
+  hasThumb?: boolean
+}
+
+/**
+ * §3: ссылка на превью медиа. Картинка тянется из живой Telegram-сессии в момент
+ * показа и нигде не сохраняется — поэтому это URL, а не данные в ответе со списком.
+ */
+export function dialogMediaUrl(accountId: string, peerId: string, messageId: number, opts?: { accessHash?: string; username?: string }): string {
+  const q = new URLSearchParams()
+  if (opts?.accessHash) q.set('accessHash', opts.accessHash)
+  if (opts?.username) q.set('username', opts.username)
+  const qs = q.toString()
+  return `/api/neuro-dialogs/${accountId}/media/${peerId}/${messageId}${qs ? `?${qs}` : ''}`
 }
 
 export async function fetchInbox(accountIds: string[], limit = 100) {
@@ -73,4 +91,11 @@ export async function markDialogRead(accountId: string, peer: PeerRef) {
   return apiPost<{ ok: true }>(
     `/api/neuro-dialogs/${accountId}/read/${peer.peerId}${peerQuery(peer)}`,
   )
+}
+
+/** MR-134: диалоги, ждущие нашего ответа («пропущенные ЛС») — для колокольчика. */
+export interface AwaitingReply { accountId: string; peer: string; text: string; at: number }
+export async function fetchAwaitingReplies(): Promise<{ count: number; items: AwaitingReply[] }> {
+  const r = await apiGet<{ ok: boolean; count: number; items: AwaitingReply[] }>('/api/messages/awaiting')
+  return { count: r.count || 0, items: r.items || [] }
 }

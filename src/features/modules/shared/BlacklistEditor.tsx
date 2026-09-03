@@ -8,11 +8,12 @@ import { fetchBlacklist, addBlacklistEntry, removeBlacklistEntry } from '@/api/f
  * (10) Редактор чёрного списка целей. Глобальный список исключаемых каналов/групп.
  * Воркеры фильтруют эти цели перед действиями во всех модулях.
  */
-export function BlacklistEditor({ title = 'Чёрный список каналов' }: { title?: string }) {
+export function BlacklistEditor({ title = 'Чёрный список каналов', compact = false }: { title?: string; compact?: boolean }) {
   const pushToast = useApp((s) => s.pushToast)
   const [entries, setEntries] = useState<string[]>([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
+  const [open, setOpen] = useState(false)
 
   const reload = async () => {
     try { setEntries(await fetchBlacklist()) } catch { /* API offline */ }
@@ -34,11 +35,15 @@ export function BlacklistEditor({ title = 'Чёрный список канал�
   }
 
   const remove = async (entry: string) => {
-    try { setEntries(await removeBlacklistEntry(entry)) } catch { /* ignore */ }
+    // §12 (MR-58): не глотаем ошибку молча — иначе неудачное удаление выглядело как
+    // «кнопка не работает». Показываем причину и не трогаем список при сбое.
+    try { setEntries(await removeBlacklistEntry(entry)) }
+    catch (e) { pushToast({ type: 'error', title: 'Не удалось убрать из ЧС', desc: e instanceof Error ? e.message : '' }) }
   }
 
-  return (
-    <SectionCard icon={<Ban size={18} />} title={title} badge={String(entries.length)}>
+  // Компактный режим (§7): маленький сворачиваемый блок рядом с каналами, а не большая секция.
+  const body = (
+    <>
       <p className="mb-3 text-xs text-muted">Эти цели будут исключены из всех модулей при выборе/обработке (нейрокомментинг, реакции, чаттинг, масслукинг).</p>
       <div className="flex gap-2">
         <textarea
@@ -46,7 +51,7 @@ export function BlacklistEditor({ title = 'Чёрный список канал�
           onChange={(e) => setInput(e.target.value)}
           rows={2}
           className="input resize-none font-mono text-sm"
-          placeholder="@channel или https://t.me/channel (по одному на строку)"
+          placeholder="@канал или @группа, ссылка t.me/… (по одному на строку)"
         />
         <button type="button" onClick={add} disabled={loading} className="btn-ghost h-auto shrink-0 flex-col px-4"><Plus size={16} /> Добавить</button>
       </div>
@@ -62,6 +67,30 @@ export function BlacklistEditor({ title = 'Чёрный список канал�
       ) : (
         <p className="mt-3 text-xs text-muted">Чёрный список пуст.</p>
       )}
+    </>
+  )
+
+  if (compact) {
+    return (
+      <div className="rounded-xl border border-line bg-elevated/30">
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-semibold text-muted hover:text-fg"
+        >
+          <Ban size={15} className="text-rose-300/80" />
+          {title}
+          <span className="rounded-md bg-line/60 px-1.5 py-0.5 text-xs font-bold text-fg">{entries.length}</span>
+          <span className="ml-auto text-xs text-faint">{open ? 'скрыть ▲' : 'показать ▾'}</span>
+        </button>
+        {open && <div className="border-t border-line px-3 pb-3 pt-3">{body}</div>}
+      </div>
+    )
+  }
+
+  return (
+    <SectionCard icon={<Ban size={18} />} title={title} badge={String(entries.length)}>
+      {body}
     </SectionCard>
   )
 }

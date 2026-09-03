@@ -1,15 +1,17 @@
-import fs from 'fs/promises'
-import path from 'path'
-import { SESSIONS_DIR } from './config.js'
-import { loadAllMeta, getAccountMeta, setAccountMeta, deleteAccountMeta, countryFromPhone, avatarColor } from './accountsMeta.js'
-import { loadSessionString, createClient } from './tgAuth.js'
+// MR-290: файловая система здесь больше не нужна — сессии переехали в базу, и всё
+// обращение к ним идёт через tgAuth.js.
+import { loadAllMeta, metaOf, getAccountMeta, setAccountMeta, deleteAccountMeta, countryFromPhone, avatarColor } from './accountsMeta.js'
+import { loadSessionString, sessionPresence, createClient, listSessionIds, deleteSession } from './tgAuth.js'
 import { getAccountLock } from './lib/accountLocks.js'
+import { getAllTrustCache } from './lib/trustCache.js'
+import { accountFingerprint } from './lib/deviceFingerprint.js'
+import { computeAccountRisk } from './lib/accountRisk.js'
+import { cachedProxyVerdict } from './accountStats.js'
+import { accountProxyUrl, getProxy } from './proxies.js'
 
-async function listSessionIds() {
-  await fs.mkdir(SESSIONS_DIR, { recursive: true })
-  const files = await fs.readdir(SESSIONS_DIR)
-  return files.filter((f) => f.endsWith('.session')).map((f) => f.replace(/\.session$/, ''))
-}
+// MR-290: список аккаунтов строится по сессиям, а сессии переехали в базу. Перечисление
+// живёт теперь в tgAuth.js рядом с чтением и записью — иначе при следующем изменении
+// хранилища пришлось бы вспоминать, что где-то есть второй обход каталога.
 
 function formatLastSeen(ts) {
   if (!ts) return '—'
@@ -32,59 +34,185 @@ function toAccountDto(accountId, meta, me, sessionOk) {
   let status = meta.status || 'active'
   if (!sessionOk) status = 'reauth'
   else if (sessionOk && status === 'reauth') status = 'active'
+  // Спамблок хранится ОТДЕЛЬНЫМ полем (результат проверки @SpamBot, accountStats), и в
+  // карточке он виден, а в списке/счётчике «Спамблок» — нет: аккаунт светился «Активные».
+  // Отражаем блокировку как статус, если базовый статус рабочий — тогда строка, KPI-счётчик
+  // и действие «Снять спамблок» его видят. Снимется сам, когда проверка вернёт 'clean'.
+  if (meta.spamblock === 'blocked' && ['active', 'working', 'warming', 'pause'].includes(status)) status = 'spamblock'
 
   return {
     id: accountId,
     tgSessionId: accountId,
+    // Сервисный аккаунт платформы: им идёт ревизия общей базы каналов и он не продаётся
+    // клиентам (решение владельца 26.08). Отдаём в списке — по нему фильтрует и
+    // планировщик ревизии, и интерфейс «чем есть парсить».
+    service: meta.service === true,
+    platform: meta.platform === true, // наш аккаунт, заведённый под админ-панель
     avatarColor: meta.avatarColor || avatarColor(accountId),
     name,
     phone: phone && !phone.startsWith('+') ? `+${phone}` : phone || '—',
     username: me?.username || meta.username || `user_${accountId.slice(-6)}`,
     userId: me?.id?.toString?.() ?? meta.userId ?? '',
     role: meta.role || 'Резерв',
-    project: meta.project || 'incubator_ai',
     country: meta.country || countryFromPhone(phone),
     status,
     lastSeen: formatLastSeen(meta.updatedAt || meta.createdAt),
-    proxy: meta.proxy || '—',
+    /*
+     * ТОЛЬКО ссылка. Собранная строка отсюда убрана: она содержит логин и пароль прокси,
+     * и в ответе это выглядело как `socks5://kcfdfepc:zvkbhwey@138.201.202.99:7569` —
+     * рабочие доступы к прокси уезжали в браузер, оседали в кэше и в истории. Что
+     * показать в таблице, панель берёт из каталога по этой ссылке.
+     */
+    proxyId: meta.proxyId || null,
+    // note патчится через PATCH /accounts/:id, но в DTO его не было — заметка
+    // сохранялась и пропадала. Нужна, в частности, чтобы видеть источник импорта.
+    note: meta.note || '',
+    // Сам облачный пароль наружу НЕ отдаём (API у нас fail-open) — только признак,
+    // что он у нас есть: этого достаточно, чтобы видеть, где реавторизация возможна.
+    //
+    // MR-290: признак приходит уже готовым из loadAllMeta. Раньше здесь стояло
+    // `!!meta.twoFA`, то есть пароль ЛЕЖАЛ в объекте меты и доезжал сюда — достаточно
+    // было одной строки `res.json(meta)` в соседнем месте, чтобы отдать его наружу.
+    has2fa: !!meta.has2fa,
     inTrash: !!meta.inTrash,
+    // Временные статусы (спамблок/флудвейт/карантин) сами спадают по сроку — без него
+    // оператор видит «спамблок» и не знает, ждать ему или списывать аккаунт.
+    statusUntil: typeof meta.statusUntil === 'number' ? meta.statusUntil : null,
+    statusReason: meta.statusReason || '',
+    // MR: последняя явная проверка живости (дата + результат). null — ни разу не проверяли
+    // через ?verify — тогда карточка честно показывает «не проверялся».
+    lastCheckedAt: typeof meta.lastCheckedAt === 'number' ? meta.lastCheckedAt : null,
+    lastCheckOk: typeof meta.lastCheckOk === 'boolean' ? meta.lastCheckOk : null,
     createdAt: meta.createdAt || Date.now(),
     busyIn: (() => {
       const lock = getAccountLock(accountId)
-      return lock ? { moduleKey: lock.moduleKey, taskId: lock.taskId, moduleLabel: lock.moduleLabel } : undefined
+      if (!lock) return undefined
+      // Многомодульность (20.08): аккаунт может числиться в нескольких модулях — отдаём
+      // все, чтобы форма запуска блокировала только совпадение по СВОЕМУ модулю.
+      return {
+        moduleKey: lock.moduleKey, taskId: lock.taskId, moduleLabel: lock.moduleLabel,
+        modules: lock.holders.map((h) => ({ moduleKey: h.moduleKey, moduleLabel: h.moduleLabel })),
+      }
     })(),
   }
 }
 
-export async function tgListAccounts() {
-  const ids = await listSessionIds()
+/**
+ * Список аккаунтов.
+ *
+ * `verify` — сходить в Telegram за каждым аккаунтом и обновить профиль/статус сессии.
+ * По умолчанию ВЫКЛЮЧЕНО: это по подключению на аккаунт, и на полусотне аккаунтов
+ * страница менеджера открывалась две с половиной минуты. Профиль (имя, username,
+ * телефон, userId) и так лежит в meta с прошлой удачной проверки, поэтому обычный
+ * список отдаётся мгновенно, а проверку живости запускают отдельно и осознанно.
+ * @param {{ verify?: boolean }} [opts]
+ */
+/**
+ * Кому принадлежит аккаунт (правка 18.08).
+ *
+ * Поля владельца у аккаунтов не было вовсе — продукт начинался как одно пространство,
+ * наше. С самостоятельными регистрациями это стало утечкой: `/api/tg/accounts` отдавал
+ * ВСЕ аккаунты платформы любому вошедшему, вместе с телефонами.
+ *
+ * Аккаунты, заведённые до этой правки, владельца не имеют — они наши, поэтому видны
+ * только админу. Новые получают `ownerId` при заведении.
+ */
+function accountBelongsTo(meta, ownerId) {
+  const owner = String(meta?.ownerId || '')
+  return owner ? owner === String(ownerId || '') : false
+}
+
+export async function tgListAccounts(opts = {}) {
+  const verify = opts.verify === true
+  // Без ownerId (админ, дев без сессии, внутренние вызовы) фильтра нет — иначе воркеры
+  // и админ-панель перестали бы видеть аккаунты, с которыми работают.
+  const ownerId = opts.ownerId ? String(opts.ownerId) : null
+  /*
+   * `only` — собрать ОДИН аккаунт (правка 27.08: «очень долго обновляется прокси»).
+   *
+   * Сохранение прокси пересобирало весь парк дважды: сначала tgPatchAccount строил список
+   * из девяноста восьми аккаунтов, чтобы вернуть одну изменённую строку, потом витрина
+   * перезагружала список целиком. Каждый аккаунт — это чтение метаданных и файла сессии,
+   * то есть двести лишних обращений на одно нажатие «Сохранить».
+   */
+  const only = opts.only ? String(opts.only) : null
+  const ids = (await listSessionIds()).filter((id) => !only || id === only)
   const accounts = []
+  /*
+   * Всё, что одинаково для ВСЕГО парка, читается до цикла и по одному разу.
+   *
+   * Здесь стояли `getAccountMeta` и `loadSessionString` — по вызову на аккаунт. Пока мета
+   * лежала в одном jsonb, а сессии файлами на диске, это стоило дёшево и не бросалось в
+   * глаза. После переезда в базу цена каждого вызова изменилась: `getAccountMeta` читает
+   * ВСЮ таблицу меты, а с MR-262 тянет следом ещё и весь каталог прокси с расшифровкой
+   * паролей; `loadSessionString` — отдельный запрос по аккаунту. На парке из шестидесяти
+   * трёх аккаунтов страница списка отправляла в базу больше двухсот запросов подряд
+   * вместо трёх, и открывалась во столько же раз дольше.
+   *
+   * Правило простое: внутри цикла по аккаунтам не должно остаться ни одного обращения,
+   * которое не зависит от конкретного аккаунта.
+   */
+  const [trustAll, allMeta, сСессией] = await Promise.all([
+    getAllTrustCache(),
+    loadAllMeta(),
+    sessionPresence(ids),
+  ])
 
   for (const accountId of ids) {
-    let meta = await getAccountMeta(accountId)
-    const sessionStr = await loadSessionString(accountId)
-    if (!sessionStr) continue
+    let meta = metaOf(allMeta, accountId)
+    if (ownerId && !accountBelongsTo(meta, ownerId)) continue
+    if (!сСессией.has(accountId)) continue
 
     let me = null
-    let sessionOk = false
-    try {
-      const client = await createClient(sessionStr, meta.proxy)
-      me = await client.getMe()
-      sessionOk = true
-      await client.disconnect()
+    // Без проверки считаем сессию рабочей: файл на месте, а реальный вердикт даст
+    // либо запуск модуля, либо явная проверка. Иначе все аккаунты уехали бы в reauth.
+    let sessionOk = true
+    if (verify) {
+      try {
+        // Строка сессии нужна ТОЛЬКО в этой ветке. Здесь на каждый аккаунт и так идёт
+        // подключение к Telegram, рядом с которым одно чтение ничего не решает.
+        const sessionStr = await loadSessionString(accountId)
+        const client = await createClient(sessionStr, await accountProxyUrl(meta), accountFingerprint(accountId, meta))
+        me = await client.getMe()
+        sessionOk = true
+        await client.disconnect()
 
-      meta = await setAccountMeta(accountId, {
-        name: `${me.firstName || ''} ${me.lastName || ''}`.trim(),
-        username: me.username,
-        phone: me.phone,
-        userId: me.id?.toString?.(),
-        ...(meta.status === 'reauth' ? { status: 'active' } : {}),
-      })
-    } catch {
-      sessionOk = false
+        meta = await setAccountMeta(accountId, {
+          name: `${me.firstName || ''} ${me.lastName || ''}`.trim(),
+          username: me.username,
+          phone: me.phone,
+          userId: me.id?.toString?.(),
+          // MR: фиксируем факт и результат явной проверки живости — иначе оператор
+          // не видит, когда аккаунт последний раз проверялся и чем закончилось.
+          lastCheckedAt: Date.now(),
+          lastCheckOk: true,
+          ...(meta.status === 'reauth' ? { status: 'active' } : {}),
+        })
+      } catch {
+        sessionOk = false
+        // Результат проверки сохраняем и при провале (сессия/прокси не ответили) —
+        // статус НЕ форсим в reauth (провал может быть транзиентным, прокси/сеть):
+        // это отдельная сознательная проверка, а не приговор аккаунту.
+        meta = await setAccountMeta(accountId, { lastCheckedAt: Date.now(), lastCheckOk: false })
+      }
     }
 
-    accounts.push(toAccountDto(accountId, meta, me, sessionOk))
+    const dto = toAccountDto(accountId, meta, me, sessionOk)
+    const t = trustAll[accountId]
+    if (t) { dto.trustScore = t.score; dto.trustBand = t.band }
+    // §6.3 (AM-002): прокси «рабочий», если его нет (прямое подключение) либо он не 'dead'.
+    // Ручной прокси не из каталога → статус неизвестен → не помечаем нерабочим (не прячем зря).
+    // ЕДИНЫЙ источник правды с вкладкой «Прокси»: обе стороны зовут одну функцию, иначе
+    // список и карточка расходятся прямо на экране («ok» в каталоге против устаревшего
+    // meta.proxyWorking). Запись берётся ПО ССЫЛКЕ — одна строка по первичному ключу.
+    // Вердикт: 'down' → нерабочий; 'ok'/null (ещё не проверен) → не пугаем «не отвечает».
+    const записьПрокси = meta.proxyId ? await getProxy(meta.proxyId).catch(() => null) : null
+    const proxyVerdict = cachedProxyVerdict(записьПрокси, meta)
+    dto.proxyOk = !meta.proxyId || proxyVerdict !== 'down'
+    // MR-131: прокси мёртв ИЛИ отсутствует — обе ситуации риск, но разные (разделяем).
+    dto.noProxy = !meta.proxyId
+    dto.risk = computeAccountRisk({ status: dto.status, proxyOk: dto.proxyOk, noProxy: dto.noProxy, trustBand: dto.trustBand })
+    accounts.push(dto)
   }
 
   accounts.sort((a, b) => b.createdAt - a.createdAt)
@@ -124,30 +252,45 @@ export async function tgPatchAccount(accountId, patch) {
   const sessionStr = await loadSessionString(accountId)
   if (!sessionStr) throw new Error('Аккаунт не найден')
 
-  const allowed = ['role', 'project', 'country', 'status', 'proxy', 'inTrash', 'note']
+  /*
+   * `service` — метка «этот аккаунт работает на ревизию базы» (правка 27.08). Ревизия
+   * парсера берёт ТОЛЬКО такие аккаунты (parserRefresh.pickAccounts), но проставить метку
+   * было негде ни в одном интерфейсе: пул всегда оставался пустым, и крон каждые 12 часов
+   * писал «нет свободных сервисных аккаунтов». Поле существовало, работать им было нельзя.
+   */
+  // `proxy` (строка подключения) больше не принимается: связь задаётся ссылкой proxyId.
+  const allowed = ['role', 'project', 'country', 'status', 'proxyId', 'inTrash', 'note', 'service']
   /** @type {Record<string, unknown>} */
   const clean = {}
   for (const k of allowed) {
     if (patch[k] !== undefined) clean[k] = patch[k]
   }
   await setAccountMeta(accountId, clean)
-  const accounts = await tgListAccounts()
-  return accounts.find((a) => a.id === accountId)
+  // Только этот аккаунт: остальные девяносто семь к правке одной строки отношения не имеют.
+  const [account] = await tgListAccounts({ only: accountId })
+  return account
 }
 
 export async function tgDeleteAccount(accountId) {
-  const sessionPath = path.join(SESSIONS_DIR, `${accountId}.session`)
-  try {
-    await fs.unlink(sessionPath)
-  } catch {
-    /* already gone */
-  }
+  // MR-290: сессию убираем и из базы, и с диска. Раньше удалялся только файл — а на
+  // общей базе сессия оставалась бы живым доступом к аккаунту, которого «уже нет».
+  await deleteSession(accountId)
   await deleteAccountMeta(accountId)
 }
 
-export async function tgEmptyTrash() {
+/**
+ * Очистить корзину — удалить помеченные аккаунты безвозвратно.
+ *
+ * @param {string[]|null} [only] какие именно чистить. Роут передаёт сюда аккаунты
+ * автора запроса: без этого один клиент удалял корзину ВСЕЙ платформы, а удаление
+ * аккаунта откатить нечем. `null` (внутренние вызовы, админ) — чистит всё.
+ */
+export async function tgEmptyTrash(only = null) {
   const allMeta = await loadAllMeta()
-  const trashed = Object.entries(allMeta).filter(([, m]) => m.inTrash).map(([id]) => id)
+  const allow = only ? new Set(only.map(String)) : null
+  const trashed = Object.entries(allMeta)
+    .filter(([id, m]) => m.inTrash && (!allow || allow.has(String(id))))
+    .map(([id]) => id)
   for (const id of trashed) await tgDeleteAccount(id)
   return trashed.length
 }

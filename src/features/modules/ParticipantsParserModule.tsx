@@ -1,21 +1,25 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Play, Users, Settings2, Filter, UserCircle2, Eye, Timer, Zap, Database, Search,
   Copy, Hash, Download, Trash2, ExternalLink, History, MessageCircle, Star, Check, Activity,
-  ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Cookie, Loader2, FolderPlus,
+  ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Cookie, Loader2, FolderPlus, Terminal, ArrowUpRight,
 } from 'lucide-react'
 import { MODULES, type ModuleConfig } from '@/shared/config/modules'
 import { activeAccounts, useApp } from '@/mocks/store'
-import { Switch, Select, Segmented, Badge, EmptyState, Modal } from '@/shared/ui'
-import { LogsPanel } from '@/widgets/LogsPanel'
+import { Switch, Select, Badge, EmptyState, Modal } from '@/shared/ui'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { useModuleTask } from './shared/useModuleTask'
-import { SectionCard, NumberField, ProtectionBlock, LaunchPanel } from './shared'
+import { lookupParserCache, setParserWatch, type ParserCacheHit } from '@/api/modulesApi'
+import { SectionCard, NumberField, ProtectionTimings, LaunchPanel, LaunchSteps, markCurrentStep, TaskStartedModal, SchedulePanel, usePresetCarry, useBlockAccess, ParserQueries } from './shared'
+import { PresetBar } from './shared/PresetBar'
+import { SavePresetModal, presetSettings } from './shared/SavePresetModal'
 import { cn } from '@/shared/lib/utils'
 import { downloadXls } from '@/shared/lib/exportXls'
-import { SaveToFolderModal } from './shared/FolderPicker'
-import { fetchModuleTasks, fetchModuleTask, type ModuleTaskSettings } from '@/api/modulesApi'
+import { FolderPicker, SaveToFolderModal } from './shared/FolderPicker'
+import { DedupeButton } from '@/shared/ui/DedupeButton'
+import { fetchModuleTasks, fetchModuleTask, type ModuleTaskSettings, type ModulePresetSettings } from '@/api/modulesApi'
 import { fetchTgstatOptions, fetchTgstatSession, fetchTgstatTargets, type TgstatOptions, type TgstatSession } from '@/api/tgstatApi'
+import { LaunchCost } from './shared/LaunchCost'
 
 /** Стабильные ключи фильтров/лимитов по русским лейблам (для бэкенда). */
 const FILTER_KEY: Record<string, string> = {
@@ -57,7 +61,7 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
   const P = cfg.participants!
   const accounts = activeAccounts(useApp((s) => s.data))
   const pushToast = useApp((s) => s.pushToast)
-  const { task, running, starting, start, stop, savePreset, deletePreset, presets } = useModuleTask(moduleKey)
+  const { task, running, starting, start, stop, savePreset, deletePreset, editPreset, presets, justStarted, dismissJustStarted } = useModuleTask(moduleKey)
 
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [aiProtect, setAiProtect] = useState(false)
@@ -67,7 +71,6 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
   const [fastWork, setFastWork] = useState(false)
   const [activeStories, setActiveStories] = useState(false)
   const [intersection, setIntersection] = useState(false)
-  const [userSource, setUserSource] = useState<'participants' | 'writers'>('participants')
 
   const [filters, setFilters] = useState<Record<string, boolean>>(() => {
     const init: Record<string, boolean> = {}
@@ -80,8 +83,17 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
     for (const l of P.limits ?? []) init[lkey(l.label)] = l.value
     return init
   })
-  const [delayChat, setDelayChat] = useState(P.delays[0]?.value ?? 5)
+  const [delayChat, setDelayChat] = useState(P.delays[0]?.value ?? 15)
   const [delayItem, setDelayItem] = useState(P.delays[1]?.value ?? 0.5)
+  // §6: пауза перед ВСТУПЛЕНИЕМ. Отдельно от «между чатами»: та срабатывает после
+  // обработки, а вступления — самое рискованное действие, серия подряд даёт FloodWait.
+  // Были 30–90 и оказались короткими: на живом прогоне 10 аккаунтов поймали FloodWait
+  // до 45 минут. Ставим осторожнее — вступление дешевле переждать, чем ловить бан.
+  const [joinMin, setJoinMin] = useState(90)
+  const [joinMax, setJoinMax] = useState(240)
+  // §3.9: асинхронный режим — группы делятся между аккаунтами, и каждый аккаунт работает
+  // СВОЕЙ задачей. Задачи независимы: свой прогресс, свои логи, свой «Стоп»; падение
+  // одной не трогает остальные. Последовательный режим оставлен как был.
 
   // результаты
   const [resQuery, setResQuery] = useState('')
@@ -92,13 +104,22 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
   const [saveFolderOpen, setSaveFolderOpen] = useState(false)
 
   const targetList = useMemo(() => targets.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean), [targets])
-  const keywordList = useMemo(() => keywords.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean), [keywords])
+  // MR-104: ключевые слова разделяются точкой с запятой (и переносом строки) — чтобы фраза могла содержать запятую.
+  const keywordList = useMemo(() => keywords.split(/[;\n]+/).map((s) => s.trim()).filter(Boolean), [keywords])
 
   const setF = (k: string, v: boolean) => setFilters((s) => ({ ...s, [k]: v }))
   const setL = (k: string, v: number) => setLimits((s) => ({ ...s, [k]: v }))
 
+  const { carry, remember } = usePresetCarry()
+
+  // MR-251: уведомления о статусе ЗАДАЧИ живут у запуска и включены по умолчанию
+  // (владелец 30.08: «они имеют отношение только к задаче»).
+  const [notifyStatus, setNotifyStatus] = useState(true)
+
   const buildSettings = useCallback((): ModuleTaskSettings => ({
+    ...carry(), // параметры шаблона, которым нет ручки в форме (напр. delayPreset у MCP-задач)
     accountIds: [...selected],
+    notifyOnStatus: notifyStatus,
     targets: targetList,
     keywords: keywordList,
     aiProtection: aiProtect,
@@ -106,12 +127,12 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
     filters,
     limits,
     activeStories,
-    intersectionMode: moduleKey === 'parsing-users' && userSource !== 'writers' ? intersection : false,
-    userSource: moduleKey === 'parsing-users' ? userSource : undefined,
+    intersectionMode: moduleKey === 'parsing-users' ? intersection : false,
     delayChat: fastWork ? 0 : delayChat,
     delayItem: fastWork ? 0 : delayItem,
+    delays: { join: [fastWork ? 0 : joinMin, fastWork ? 0 : joinMax] as [number, number] },
     limit: limits.participants ?? limits.messages ?? limits.posts ?? 1000,
-  }), [selected, targetList, keywordList, aiProtect, protLevel, filters, limits, activeStories, intersection, userSource, fastWork, delayChat, delayItem, moduleKey])
+  }), [carry, selected, targetList, keywordList, aiProtect, protLevel, filters, limits, activeStories, intersection, fastWork, delayChat, delayItem, joinMin, joinMax, moduleKey, notifyStatus])
 
   const busySelectedCount = useMemo(() => [...selected].filter((id) => accounts.some((a) => a.id === id && a.busyIn)).length, [selected, accounts])
   const canStart = selected.size > 0 && busySelectedCount === 0 && targetList.length > 0
@@ -133,11 +154,19 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
     } catch (e) { pushToast({ type: 'error', title: 'Ошибка', desc: e instanceof Error ? e.message : '' }) }
   }
 
-  const handleStart = () => { setCleared(false); void start(buildSettings(), `${cfg.title} · ${selected.size} акк.`) }
-  const handleSave = () => { const n = window.prompt('Название пресета'); if (n?.trim()) void savePreset(n.trim(), buildSettings()) }
+  const handleStart = () => {
+    setCleared(false)
+    void start(buildSettings(), `${cfg.title} · ${selected.size} акк.`)
+  }
+
+  // §10: сохранение через модалку (имя + цвет + владелец), как в остальных модулях.
+  const [presetModalOpen, setPresetModalOpen] = useState(false)
+  const handleSave = () => setPresetModalOpen(true)
 
   // Цели (targetList) не восстанавливаем — они ситуативны; переносим фильтры, лимиты и задержки.
-  const applyPreset = useCallback((s: ModuleTaskSettings) => {
+  const applyPreset = useCallback((s: ModulePresetSettings) => {
+    if (s.notifyOnStatus !== undefined) setNotifyStatus(s.notifyOnStatus)
+    remember(s)
     if (s.aiProtection !== undefined) setAiProtect(s.aiProtection)
     if (s.protectionLevel !== undefined) setProtLevel(s.protectionLevel)
     if (Array.isArray(s.keywords)) setKeywords(s.keywords.join(', '))
@@ -146,11 +175,62 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
     if (s.activeStories !== undefined) setActiveStories(s.activeStories)
     if (s.delayChat !== undefined) setDelayChat(s.delayChat)
     if (s.delayItem !== undefined) setDelayItem(s.delayItem)
-    pushToast({ type: 'success', title: 'Пресет применён' })
-  }, [pushToast])
+    if (s.delays?.join) { setJoinMin(s.delays.join[0]); setJoinMax(s.delays.join[1]) }
+    // «Быстрая работа» — не отдельная настройка, а нулевые задержки: в шаблоне от неё
+    // остаются только нули. Поэтому и восстанавливаем её по ним. Иначе тумблер оставался
+    // выключенным при нулевых задержках — то самое «настройка слетела» (созвон 19.08).
+    if (s.delayChat !== undefined && s.delayItem !== undefined) setFastWork(s.delayChat === 0 && s.delayItem === 0)
+    if (s.intersectionMode !== undefined) setIntersection(!!s.intersectionMode)
+    pushToast({ type: 'success', title: 'Шаблон применён' })
+  }, [pushToast, remember])
 
-  const logs = task?.logs ?? []
-  const raw = (cleared ? [] : (task?.results ?? [])) as UserResult[]
+  /*
+   * §6 (MR-38): кэш результатов. До 24.08 он был только у парсера каналов, и повторный
+   * парс той же группы каждый раз заново гонял аккаунты. Запрос здесь описывается не
+   * словами, а источниками — сигнатуру на сервере строим по ним плюс фильтры и лимиты
+   * сбора (с лимитом 20 и 1000 состав разный, подменять одно другим нельзя).
+   */
+  // Права на блоки (26.08): до этой правки проверка жила только в LiveModule, и
+  // выданные парсеру блоки ни на что не влияли — тумблер щёлкали, экран не менялся.
+  const showBlock = useBlockAccess(moduleKey)
+
+  const [cacheHit, setCacheHit] = useState<ParserCacheHit | null>(null)
+  const [usingCache, setUsingCache] = useState(false)
+  useEffect(() => {
+    if (running || targetList.length === 0) { setCacheHit(null); setUsingCache(false); return }
+    let cancelled = false
+    // Дебаунс — источники набирают руками, дёргать сервер на каждый символ незачем.
+    const t = setTimeout(() => {
+      void lookupParserCache(moduleKey, { targets: targetList, filters, limits })
+        .then((hit) => { if (!cancelled) setCacheHit(hit) })
+        .catch(() => {})
+    }, 500)
+    return () => { cancelled = true; clearTimeout(t) }
+  }, [moduleKey, running, targetList, filters, limits])
+
+
+  /*
+   * Слежение за запросом (просьба владельца 24.08): раз в сутки перезапускать тот же
+   * парс, искать новые каналы и отмечать пропавшие. Выключено по умолчанию и включается
+   * тут же, рядом с сохранённым результатом: перепроверка — это реальный проход по
+   * аккаунтам и списание монет, включать её за человека молча нельзя.
+   */
+  const [watching, setWatching] = useState(false)
+  const [watchBusy, setWatchBusy] = useState(false)
+  useEffect(() => { setWatching(false) }, [cacheHit?.updatedAt])
+  const toggleWatch = async (on: boolean) => {
+    setWatchBusy(true)
+    try {
+      await setParserWatch(moduleKey, { targets: targetList, filters, limits }, on, 24)
+      setWatching(on)
+      pushToast({ type: 'success', title: on ? 'Слежу за запросом' : 'Слежение выключено', desc: on ? 'Раз в сутки перепроверю и найду новое' : undefined })
+    } catch (e) {
+      pushToast({ type: 'error', title: 'Не вышло', desc: e instanceof Error ? e.message : 'Ошибка' })
+    } finally { setWatchBusy(false) }
+  }
+
+
+  const raw = (cleared ? [] : (usingCache && cacheHit ? (cacheHit.results as UserResult[]) : (task?.results ?? []))) as UserResult[]
   const results = useMemo(() => {
     let r = raw
     if (resQuery) { const q = resQuery.toLowerCase(); r = r.filter((x) => `${x.name} ${x.username}`.toLowerCase().includes(q)) }
@@ -187,24 +267,55 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
 
   return (
     <div className="space-y-4">
-      <AccountPicker selected={selected} onChange={setSelected} actions={cfg.accountActions} withFilters={!!cfg.accountFilters} selectedTitle={cfg.selectedTitle ?? 'Выбрано для парсинга'} />
+      <TaskStartedModal task={justStarted} moduleTitle={cfg.title} onClose={dismissJustStarted} />
+      <SavePresetModal open={presetModalOpen} onClose={() => setPresetModalOpen(false)}
+        onSave={(name, color, owner, withAccounts) => savePreset(name, presetSettings(buildSettings(), withAccounts), color, owner)} />
+      {/* ТЗ 06.08 §10: выбор шаблона — вверху, до всех настроек (TPL-001). */}
+      <PresetBar presets={presets} onApply={applyPreset} onSave={handleSave}
+        onEdit={editPreset} onDelete={deletePreset} disabled={running} />
+      <div id="sec-accounts" className="scroll-mt-24">
+        {/*
+          Аккаунты всегда работают одновременно — тумблера нет (решение владельца 26.08).
+          Подсказка стоит до выбора: вопрос «сколько отмечать» возникает именно здесь.
+        */}
+        <div className="mb-3 flex items-start gap-2.5 rounded-2xl border border-spark-500/30 bg-spark-500/8 px-4 py-3">
+          <Zap size={16} className="mt-0.5 shrink-0 text-spark-300" />
+          <div className="min-w-0 text-xs leading-relaxed text-white/60">
+            <span className="font-bold text-fg">Чем больше аккаунтов, тем быстрее парсинг.</span>{' '}
+            {selected.size > 1
+              ? `Источники разделятся между ${selected.size} аккаунтами: они пойдут одновременно и стартуют вразнобой.`
+              : 'Источники делятся между выбранными аккаунтами и обрабатываются одновременно.'}
+            <span className="mt-1 block text-white/35">
+              Это ещё и безопаснее: на каждый профиль приходится меньше запросов, а FloodWait прилетает именно за частоту с одного.
+            </span>
+          </div>
+        </div>
+        <AccountPicker moduleKey={moduleKey} selected={selected} onChange={setSelected} actions={cfg.accountActions} withFilters={!!cfg.accountFilters} selectedTitle={cfg.selectedTitle ?? 'Выбрано для парсинга'} />
+      </div>
 
-      <SectionCard icon={<Settings2 size={18} />} title="Настройки парсинга" badge={targetList.length ? `${targetList.length} целей` : undefined}>
-        {cfg.aiProtection && <ProtectionBlock enabled={aiProtect} onEnabled={setAiProtect} level={protLevel} onLevel={setProtLevel} />}
-
+      {showBlock('targets') && (
+      <SectionCard id="sec-settings" icon={<Settings2 size={18} />} title="Настройки парсинга" badge={targetList.length ? `${targetList.length} групп` : undefined}>
         <div className="grid gap-4 lg:grid-cols-2">
           {/* Левая колонка: источник + ключевые слова + лимиты */}
           <div className="space-y-4">
             {moduleKey === 'parsing-users' && (
               <div className="rounded-2xl border border-line bg-elevated/40 p-3">
                 <div className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-fg"><Filter size={14} className="text-spark-400" /> Способ сбора</div>
-                <Segmented options={['Участники группы', 'Активные (кто писал)']} value={userSource === 'writers' ? 1 : 0} onChange={(i) => setUserSource(i === 1 ? 'writers' : 'participants')} size="sm" />
-                {userSource === 'writers' && (
-                  <div className="mt-2 flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/8 p-2.5 text-[11px] text-amber-200">
-                    <Activity size={13} className="mt-0.5 shrink-0" />
-                    <span>Канал → находим чат обсуждения → парсим тех, кто <b>писал</b> (за последние N сообщений), с разбивкой на админ/премиум/обычный. Внимание: чтение большого числа сообщений повышает риск FloodWait/бана — не ставьте лимит слишком высоким и включите защиту.</span>
+                {/* Выбора больше нет: по отдельности каждый способ терял часть людей. */}
+                <div className="space-y-1.5 text-[11px] leading-relaxed text-muted">
+                  <div className="flex items-start gap-2">
+                    <Users size={13} className="mt-0.5 shrink-0 text-spark-400" />
+                    <span><b className="text-fg">Список участников</b> — все, кто состоит в группе. У крупных каналов он часто закрыт или обрезан Telegram.</span>
                   </div>
-                )}
+                  <div className="flex items-start gap-2">
+                    <Activity size={13} className="mt-0.5 shrink-0 text-iris-400" />
+                    <span><b className="text-fg">Кто писал</b> — из чата обсуждения, за последние N сообщений, с разбивкой на админ/премиум/обычный. Даёт живых и активных, но только их.</span>
+                  </div>
+                  <div className="flex items-start gap-2 rounded-xl border border-spark-500/25 bg-spark-500/5 p-2">
+                    <Filter size={13} className="mt-0.5 shrink-0 text-spark-400" />
+                    <span>Идут <b className="text-fg">оба сразу</b> — так находится максимум людей. Совпавшие схлопываются, дублей в результатах не будет. Если список участников закрыт, останутся писавшие, и задача не встанет.</span>
+                  </div>
+                </div>
               </div>
             )}
 
@@ -215,6 +326,18 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
               <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
                 {P.formatHint && <span className="text-[11px] text-muted">{P.formatHint}</span>}
                 <div className="ml-auto flex flex-wrap gap-2">
+                  <DedupeButton value={targets} onChange={setTargets} mode="handle" />
+                  {/* §3.9: источники можно взять готовой папкой, а не вбивать списком. */}
+                  <FolderPicker
+                    targets={targetList}
+                    onLoad={(list) => setTargets((t) => {
+                      // Дописываем к уже введённому, без дублей: папку часто грузят поверх ручного списка.
+                      const have = new Set(t.split(/[\n,]+/).map((x) => x.trim()).filter(Boolean))
+                      const add = list.filter((x) => !have.has(x))
+                      if (!add.length) return t
+                      return (t.trim() ? t.trimEnd() + '\n' : '') + add.join('\n')
+                    })}
+                  />
                   <TgstatSourceButton onFill={(u) => setTargets((t) => (t.trim() ? t.trimEnd() + '\n' : '') + u.map((x) => `@${x}`).join('\n'))} />
                   {P.historyBtn && <button type="button" onClick={() => void loadFromHistory()} className="btn-soft h-8 text-xs"><History size={13} /> {P.historyBtn}</button>}
                 </div>
@@ -225,19 +348,19 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
               <div>
                 <div className="label flex items-center gap-1.5"><Search size={14} className="text-spark-400" /> {P.keywords.label}</div>
                 <p className="mb-1 text-xs text-muted">{P.keywords.hint}</p>
-                <input value={keywords} onChange={(e) => setKeywords(e.target.value)} className="input h-10 text-sm" placeholder="Слова через запятую…" />
+                <input value={keywords} onChange={(e) => setKeywords(e.target.value)} className="input h-10 text-sm" placeholder="крипта; p2p обмен; заработок…" />
               </div>
             )}
 
             {(P.limits ?? []).map((l) => (
               <div key={l.label} className="rounded-2xl border border-line bg-elevated/40 p-3">
-                <NumberField label={l.label} value={limits[lkey(l.label)] ?? l.value} onChange={(v) => setL(lkey(l.label), v)} />
+                <NumberField label={l.label} value={limits[lkey(l.label)] ?? l.value} onChange={(v) => setL(lkey(l.label), v)} min={l.min ?? 1} max={l.max} />
                 {l.hint && <p className="mt-1 text-[11px] text-muted">{l.hint}</p>}
               </div>
             ))}
             {!P.limits && P.unit && (
               <div className="rounded-2xl border border-line bg-elevated/40 p-3">
-                <NumberField label={P.unit.limitLabel} value={limits[lkey(P.unit.limitLabel)] ?? P.unit.limitValue} onChange={(v) => setL(lkey(P.unit.limitLabel), v)} />
+                <NumberField label={P.unit.limitLabel} value={limits[lkey(P.unit.limitLabel)] ?? P.unit.limitValue} onChange={(v) => setL(lkey(P.unit.limitLabel), v)} min={P.unit.limitMin ?? 1} max={P.unit.limitMax} />
                 <p className="mt-1 text-[11px] text-muted">Максимум пользователей для парсинга из каждой группы (1–100000)</p>
               </div>
             )}
@@ -279,28 +402,100 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
               <ToggleRow icon={<Users size={15} />} label="Только пересечение групп" desc="Оставить только пользователей, состоящих во ВСЕХ указанных группах (уникальная фича)" checked={intersection} onChange={setIntersection} />
             )}
 
-            {!fastWork && (
-              <div className="rounded-2xl border border-line bg-elevated/40 p-3">
-                <div className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-fg"><Timer size={14} className="text-spark-400" /> Настройки задержек</div>
-                <div className="space-y-2">
-                  <DelayRow label={P.delays[0]?.label ?? 'Задержка между чатами'} value={delayChat} onChange={setDelayChat} />
-                  <DelayRow label={P.delays[1]?.label ?? 'Задержка между пользователями'} value={delayItem} onChange={setDelayItem} step={0.5} />
-                </div>
-              </div>
-            )}
           </div>
         </div>
       </SectionCard>
+      )}
+      {/* Один блок на все модули (правка 19.08): защита и задержки — одно решение.
+          У парсера участников свои поля пауз (между чатами, между пользователями,
+          перед вступлением), поэтому общий TimingSection не подходит — но карточка
+          и заголовок те же, что везде.  */}
+      {cfg.aiProtection && (
+        <ProtectionTimings>
+          {!fastWork && (
+            <div className="mt-4 border-t border-line pt-4">
+              <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-fg">
+                <Timer size={16} className="text-spark-300" /> Тайминги и задержки
+              </div>
+                <div className="rounded-2xl border border-line bg-elevated/40 p-3">
+                  <div className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-fg"><Timer size={14} className="text-spark-400" /> Настройки задержек</div>
+                  <div className="space-y-2">
+                    <DelayRow label={P.delays[0]?.label ?? 'Задержка между чатами'} value={delayChat} onChange={setDelayChat} />
+                    <DelayRow label={P.delays[1]?.label ?? 'Задержка между пользователями'} value={delayItem} onChange={setDelayItem} step={0.5} />
+                    <DelayRow label="Пауза перед вступлением, от" value={joinMin} onChange={setJoinMin} step={5} />
+                    <DelayRow label="Пауза перед вступлением, до" value={joinMax} onChange={setJoinMax} step={5} />
+                  </div>
+                  <div className="mt-2 rounded-xl border border-amber-500/25 bg-amber-500/5 p-2 text-[11px] leading-relaxed text-amber-200">
+                    Чтобы прочитать участников чужого чата, аккаунт должен туда <b>вступить</b> — это самое
+                    рискованное действие: серия быстрых вступлений даёт FloodWait и спам-фильтр. Пауза берётся
+                    случайной из диапазона и ждётся <b>только если реально надо вступать</b>: где аккаунт уже
+                    состоит, он читает сразу.
+                  </div>
+                </div>
+            </div>
+          )}
+        </ProtectionTimings>
+      )}
 
-      <SectionCard icon={<Play size={18} />} title={running ? 'Выполнение' : 'Запуск & Логи'} badge={running ? 'LIVE' : undefined}>
-        <LaunchPanel running={running} starting={starting} canStart={canStart} onStart={handleStart} onStop={stop} onSave={handleSave}
+
+      {showBlock('run') && (
+      <SectionCard id="sec-run" icon={<Play size={18} />} title="Параметры и лимиты">
+        <LaunchPanel notify={{ on: notifyStatus, onChange: setNotifyStatus }} running={running} starting={starting} canStart={canStart} onStart={handleStart} onStop={stop} onSave={handleSave}
           primaryLabel={cfg.primaryAction ?? 'Начать'} stats={launchStats} task={task} warn={warn}
-          presets={presets} onApplyPreset={applyPreset} onDeletePreset={deletePreset} />
+          steps={!running ? <LaunchSteps steps={markCurrentStep([
+            { label: 'Аккаунты', done: selected.size > 0 && busySelectedCount === 0, anchor: 'sec-accounts' },
+            { label: P.sourceTitle, done: targetList.length > 0, anchor: 'sec-settings' },
+            { label: 'Запуск', done: false, anchor: 'sec-run' },
+          ])} /> : null}
+          blockedBy={!running && !canStart ? [
+            ...(busySelectedCount ? [`${busySelectedCount} акк. заняты`] : !selected.size ? ['выберите аккаунты'] : []),
+            ...(targetList.length ? [] : [`добавьте ${P.sourceTitle.toLowerCase()}`]),
+          ] : []}
+          cost={<LaunchCost compact moduleKey={moduleKey} actions={P.unit ? (limits[lkey(P.unit.limitLabel)] || 0) : 0} />}
+          presets={presets} onApplyPreset={applyPreset} />
       </SectionCard>
+      )}
 
-      <LogsPanel logs={logs} emptyText={cfg.logEmpty ?? 'Логов пока нет'} title="Логи выполнения" live={running} />
+      {/* §3.9: расписание и здесь — раньше блок был только в LiveModule (тест 6.13). */}
+      <SchedulePanel
+        moduleKey={moduleKey}
+        title={cfg?.title ?? moduleKey}
+        buildSettings={() => buildSettings() as unknown as Record<string, unknown>}
+        accountIds={[...selected]}
+        disabled={!selected.size}
+        disabledReason="Выберите аккаунты"
+      />
+
+      <div className="flex justify-end">
+        <a href={task ? `/panel/tasks?task=${task.id}` : '/panel/tasks'} className="inline-flex items-center gap-1 text-xs font-semibold text-spark-300 hover:underline" title="Логи по этой задаче — в Дашборде задач">
+          <Terminal size={13} /> Логи выполнения — в Дашборде задач <ArrowUpRight size={13} />
+        </a>
+      </div>
 
       <SectionCard icon={<Database size={18} />} title={cfg.resultsTitle ?? 'Результаты парсинга'} badge={String(raw.length)}>
+        {/*
+          Прошлые запросы — свёрнутым списком (форма выбрана владельцем 26.08). Рядом
+          стояла плашка «в базе есть сохранённый результат» с той же датой и той же
+          кнопкой; она убрана, чтобы выбор «свежее или сохранённое» жил в одном месте.
+        */}
+        <ParserQueries
+          moduleKey={moduleKey}
+          unit="строк"
+          onOpen={(rows, q) => {
+            setCacheHit({ updatedAt: q.updatedAt, count: rows.length, results: rows })
+            setUsingCache(true)
+            setCleared(false)
+          }}
+          onHide={() => setUsingCache(false)}
+          extra={cacheHit && !running ? (
+            <label className="flex shrink-0 cursor-pointer items-center gap-2 text-xs text-muted"
+              title="Раз в сутки перезапущу этот же сбор, найду новое и отмечу пропавшее. Тратит аккаунты и монеты — как обычный запуск.">
+              <input type="checkbox" className="accent-spark-500" checked={watching} disabled={watchBusy} onChange={(e) => void toggleWatch(e.target.checked)} />
+              Обновлять раз в сутки
+            </label>
+          ) : null}
+        />
+
         <div className="mb-4 flex flex-wrap items-center gap-2">
           <div className="relative min-w-[160px] flex-1">
             <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
@@ -315,7 +510,7 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
           <button type="button" onClick={() => setCleared(true)} disabled={!raw.length} className="btn-danger h-10 text-sm disabled:opacity-40"><Trash2 size={15} /> Очистить</button>
           <button type="button" onClick={copyLinks} disabled={!results.length} className="btn-soft h-10 text-sm disabled:opacity-40"><Copy size={15} /> Скопировать ссылки</button>
           <button type="button" onClick={copyIds} disabled={!results.length} className="btn-soft h-10 text-sm disabled:opacity-40"><Hash size={15} /> Скопировать ID</button>
-          <button type="button" onClick={() => setSaveFolderOpen(true)} disabled={!results.length} className="btn-iris h-10 text-sm disabled:opacity-40"><FolderPlus size={15} /> Сохранить в папку</button>
+          <button type="button" onClick={() => setSaveFolderOpen(true)} disabled={!results.length} className="btn-iris h-10 text-sm disabled:opacity-40"><FolderPlus size={15} /> Сохранить в группу</button>
           <button type="button" onClick={() => exportData('csv')} disabled={!results.length} className="btn-primary h-10 text-sm disabled:opacity-40"><Download size={15} /> Экспорт CSV</button>
           <button type="button" onClick={() => downloadXls(results as unknown as Record<string, unknown>[], `${moduleKey}-results`)} disabled={!results.length} className="btn-soft h-10 text-sm disabled:opacity-40"><Download size={15} /> Excel</button>
           <button type="button" onClick={() => exportData('json')} disabled={!results.length} className="btn-ghost h-10 text-sm disabled:opacity-40"><Download size={15} /> JSON</button>
@@ -399,7 +594,7 @@ function FilterCheck({ label, checked, onChange, star, admin }: { label: string;
   )
 }
 
-/** Уникальная фича: тянет группы/каналы из каталога TGStat как список целей. */
+/** Уникальная фича: тянет группы/каналы из каталога TGStat как список групп. */
 function TgstatSourceButton({ onFill }: { onFill: (usernames: string[]) => void }) {
   const pushToast = useApp((s) => s.pushToast)
   const [open, setOpen] = useState(false)
@@ -424,21 +619,21 @@ function TgstatSourceButton({ onFill }: { onFill: (usernames: string[]) => void 
       const usernames = t.map((x) => x.username).filter(Boolean)
       if (!usernames.length) { pushToast({ type: 'info', title: 'Ничего не найдено', desc: 'Попробуйте другую категорию/регион' }); return }
       onFill(usernames)
-      pushToast({ type: 'success', title: `Добавлено ${usernames.length} целей из TGStat` })
+      pushToast({ type: 'success', title: `Добавлено ${usernames.length} групп из каталога` })
       setOpen(false)
-    } catch (e) { pushToast({ type: 'error', title: 'Ошибка TGStat', desc: e instanceof Error ? e.message : '' }) } finally { setLoading(false) }
+    } catch (e) { pushToast({ type: 'error', title: 'Ошибка каталога', desc: e instanceof Error ? e.message : '' }) } finally { setLoading(false) }
   }
 
   return (
     <>
       <button type="button" onClick={openModal} className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-amber-500/40 bg-amber-500/12 px-2.5 text-xs font-semibold text-amber-200 hover:bg-amber-500/20">
-        <Cookie size={13} /> Взять цели из TGStat
+        <Cookie size={13} /> Взять группы из каталога
       </button>
-      <Modal open={open} onClose={() => setOpen(false)} title="Взять цели из TGStat" subtitle="Каталог TGStat как источник групп/каналов" icon={<Cookie size={22} />} size="sm">
+      <Modal open={open} onClose={() => setOpen(false)} title="Взять группы из каталога" subtitle="Каталог каналов как источник групп/каналов" icon={<Cookie size={22} />} size="sm">
         <div className="space-y-3">
           {session && !session.has_session && (
             <div className="rounded-xl border border-amber-500/30 bg-amber-500/8 p-3 text-sm text-amber-200">
-              TGStat не подключён. Подключите cookies в «Парсер каналов» → вкладка «Парсер каналов TGStat».
+              Каталог не подключён. Подключите cookies в «Парсер каналов» → вкладка «Парсер по каталогу».
             </div>
           )}
           <div>

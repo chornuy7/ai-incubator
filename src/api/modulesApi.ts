@@ -1,5 +1,5 @@
 import type { LogEntry } from '@/shared/types'
-import { apiGet, apiPost, apiDelete } from './client'
+import { apiGet, apiPost, apiDelete, apiPatch } from './client'
 
 export interface ModuleTaskSettings {
   accountIds: string[]
@@ -7,6 +7,7 @@ export interface ModuleTaskSettings {
   channels?: string[]
   keywords?: string[]
   commentMode?: number
+  stopWords?: string[] // §3.5: пропускать посты с этими словами (фильтр тональности/тем)
   workMode?: number
   postFilter?: number
   probability?: number
@@ -20,9 +21,13 @@ export interface ModuleTaskSettings {
   durationMinutes?: number
   aiProtection?: boolean
   protectionLevel?: number
+  /** MR-134: уведомлять о статусе ЭТОЙ задачи (ошибка/пауза) в колокольчике. По умолчанию — да. */
+  notifyOnStatus?: boolean
   promptIndex?: number
   promptText?: string
   promptOverrides?: string[]
+  mediaUrls?: string[] // §11: медиа (фото/видео/ссылки) для мейлинга/автопостинга
+  campaignId?: string // §0: задача идёт под кампанией (цель наследуется от неё)
   aiMode?: number
   delayPreset?: number
   emojis?: string[]
@@ -35,34 +40,71 @@ export interface ModuleTaskSettings {
   maxMembers?: number
   resultLimit?: number // 0 = без лимита
   activityFilter?: number // 0 любая / 1 активные / 2 неактивные
+  /** §3.8: минимальный балл канала. Считает сервер по живым сигналам — постам, свежести, отклику (26.08). */
+  minRating?: number
   commentFilter?: number // 0 любые / 1 открытые / 2 закрытые
   minComments?: number
   langDetection?: boolean
   alreadyParsed?: string[]
+  intersect?: boolean // §3.8: AND-пересечение — канал должен совпасть со ВСЕМИ ключевыми словами
   // ── Парсер участников (users/messages/comments) ──
   filters?: Record<string, boolean>
   limits?: Record<string, number>
   activeStories?: boolean
   intersectionMode?: boolean
   intersectionMin?: number
-  userSource?: 'participants' | 'writers' // как парсить users: список участников или кто писал в чате
+  // userSource убран: собираем и список участников, и писавших сразу — по отдельности
+  // каждый способ терял часть людей (закрытые списки / только активные).
+  /** §3.9: аккаунты работают параллельно ВНУТРИ одной задачи, стартуя вразнобой. */
+  parallelAccounts?: boolean
+  /** §3.9: сколько потоков крутить внутри задачи (1 = последовательно). */
+  threads?: number
   delayChat?: number
   delayItem?: number
+  // ── Прогрев ──
+  /** Темп: 0 — ~40 действий в сутки, 1 — ~20, 2 — ~10. */
+  warmLevel?: number
+  /** Сколько ДНЕЙ греем. Отсюда считается общее число действий (27.08). */
+  warmDays?: number
+  /** Сколько часов в сутки аккаунт активен: в это окно раскладываются его действия (27.08). */
+  warmHours?: number
+  // ── Нейрокомментинг: окно последних постов (§3.5) ──
+  postWindow?: number
+  semanticFilter?: boolean // §3.5: комментировать только по семантически близким к цели постам
+  semanticThreshold?: number
+  // ── Распределение типов комментариев в % (§3.5), сумма ≈ 100 ──
+  typeWeights?: number[]
+  // ── Цель кампании (§3.6) ──
+  goalId?: string
   // ── НейроДиалоги ──
   replyScope?: 'unread' | 'all' // 'unread' — только новые ЛС, 'all' — все, где последнее слово за собеседником
   dialogGoal?: string // инструкция для ИИ: как себя вести и к чему вести диалог
+  analyzeImages?: boolean // §10.5: описывать входящие фото vision-моделью (расход ×imageMultiplier)
+  /** §9: сколько сообщений пишем ОДНОМУ лиду — до целевого действия или фиксированным числом. */
+  replyLimitMode?: 'untilTarget' | 'count'
+  /** §9: лимит ответов на лида при replyLimitMode='count' (0 = без лимита). */
+  maxRepliesPerLead?: number
+  maxActiveDialogs?: number // §3.6: лимит активных диалогов на аккаунт (0 = без лимита)
   // ── Масслукинг: что смотреть и сколько последних постов ──
   lookMode?: 'stories' | 'posts' | 'both'
   lookPostsCount?: number
+  /** Массовые реакции: 0 — мониторинг новых постов, 1 — N последних постов. */
+  reactMode?: number
+  /** Сколько последних постов канала рассматривать (реакции и нейрокомментинг). */
+  lastPostsCount?: number
+  /** Брать один случайный пост из подходящих (иначе — все подходящие за заход). */
+  pickOne?: boolean
   delays?: {
     comment?: [number, number]
     action?: [number, number]
+    dm?: [number, number]
     join?: [number, number]
     request?: [number, number]
     channel?: [number, number]
     floodWait?: number
     floodQuarantine?: number
   }
+  aiPerRecipient?: boolean
 }
 
 export interface ModuleTaskProgress {
@@ -70,14 +112,39 @@ export interface ModuleTaskProgress {
   total: number
   actionsDone?: number
   commentsSent?: number
+  /**
+   * Сколько задача ФАКТИЧЕСКИ простояла в паузах (мс). В отличие от ETA — это не прогноз,
+   * а накопленная сумма: задержки между действиями, «чтение и набор», ожидание отдыха.
+   * Нужна, чтобы «за час пять комментариев» объяснялось цифрой, а не догадками (20.08).
+   */
+  waitMs?: number
 }
 
 export interface ModuleTask {
   id: string
   moduleKey: string
-  status: 'queued' | 'running' | 'stopped' | 'done' | 'error'
+  status: 'queued' | 'running' | 'stopped' | 'done' | 'error' | 'paused'
+  initiator?: string | null
+  goalId?: string | null
+  campaignId?: string | null // §0: под какой кампанией идёт задача
+  /** §5.1: монеты за ДЕЙСТВИЯ этого запуска (парсинг/комменты/ЛС). Без токенов ИИ — те в tokenCoins. */
+  spentCoins?: number
+  /** Токенов ИИ по этой задаче (только в ответе одной задачи, не в списке). */
+  tokens?: number
+  tokenCalls?: number
+  /** §10.1: монеты, списанные за токены ИИ по этой задаче. Полная цена = spentCoins + tokenCoins. */
+  tokenCoins?: number
   createdAt: number
   updatedAt: number
+  /** MR-134: счётчик ошибок в логах задачи + текст последней — для уведомлений «идёт с ошибками». */
+  errors?: number
+  lastError?: string
+  /** Причина, по которой задача УПАЛА (не просто последняя строка с ошибкой). */
+  fatalError?: string
+  /** MR-134: пауза именно из-за нулевого баланса (её чинит пополнение), а не рукой. */
+  pausedByCoins?: boolean
+  /** MR-134: сумма FloodWait по аккаунтам задачи — «упираемся в лимиты Telegram». */
+  floodWaits?: number
   progress: ModuleTaskProgress
   settings: ModuleTaskSettings
   logs: LogEntry[]
@@ -89,9 +156,25 @@ export interface ModuleTask {
 
 const base = (moduleKey: string) => `/api/modules/${moduleKey}`
 
-export async function startModuleTask(moduleKey: string, settings: ModuleTaskSettings): Promise<ModuleTask> {
-  const data = await apiPost<{ task: ModuleTask }>(`${base(moduleKey)}/tasks`, { settings })
-  return data.task
+/** Аккаунт, который модуль взять не может, и почему. */
+export interface BlockedAccount { id: string; status: string; reason: string }
+
+/** Тело ответа 409, когда часть аккаунтов недоступна. */
+export interface UnavailablePayload { error: string; blocked?: BlockedAccount[]; usableCount?: number; canSkip?: boolean }
+
+/**
+ * @param skipUnavailable исключить недоступные аккаунты и запустить на оставшихся.
+ *   Без него сервер отвечает 409 со списком — чтобы спросить человека, а не решать за него.
+ */
+/**
+ * §4.4 (D4): анти-кластерные предупреждения приходят вместе с задачей. Они НЕ
+ * блокируют запуск — решение за оператором, — но должны быть видны сразу, а не
+ * после того, как Telegram забанит группу волной. Вешаем их на объект задачи,
+ * чтобы не менять сигнатуру во всех местах вызова.
+ */
+export async function startModuleTask(moduleKey: string, settings: ModuleTaskSettings, skipUnavailable = false): Promise<ModuleTask & { clusterWarnings?: string[] }> {
+  const data = await apiPost<{ task: ModuleTask; clusterWarnings?: string[] }>(`${base(moduleKey)}/tasks`, { settings, skipUnavailable })
+  return { ...data.task, clusterWarnings: data.clusterWarnings || [] }
 }
 
 export async function fetchModuleTasks(moduleKey: string): Promise<ModuleTask[]> {
@@ -109,15 +192,68 @@ export async function stopModuleTask(moduleKey: string, taskId: string): Promise
   return data.task
 }
 
+export async function restartModuleTask(moduleKey: string, taskId: string, skipUnavailable = false): Promise<ModuleTask> {
+  const data = await apiPost<{ task: ModuleTask }>(`${base(moduleKey)}/tasks/${taskId}/restart`, { skipUnavailable })
+  return data.task
+}
+
+export async function pauseModuleTask(moduleKey: string, taskId: string): Promise<ModuleTask> {
+  const data = await apiPost<{ task: ModuleTask }>(`${base(moduleKey)}/tasks/${taskId}/pause`)
+  return data.task
+}
+
+/**
+ * §9.8: правка настроек задачи. Сервер примет её ТОЛЬКО на паузе (иначе 409):
+ * у работающей задачи воркер уже прошёл часть аккаунтов, и правка на лету дала бы
+ * результат, где часть отработала по старым настройкам, часть по новым.
+ * Состав аккаунтов не меняется — за задачей держатся локи (сервер отбросит поле).
+ */
+export async function updateModuleTaskSettings(
+  moduleKey: string, taskId: string, settings: Partial<ModuleTaskSettings>,
+): Promise<ModuleTask> {
+  const data = await apiPatch<{ ok: boolean; task: ModuleTask }>(`${base(moduleKey)}/tasks/${taskId}/settings`, { settings })
+  return data.task
+}
+
+export async function resumeModuleTask(moduleKey: string, taskId: string): Promise<ModuleTask> {
+  const data = await apiPost<{ task: ModuleTask }>(`${base(moduleKey)}/tasks/${taskId}/resume`)
+  return data.task
+}
+
+/** Все задачи по всем модулям (дашборд «Задачи», §3.9). */
+export async function fetchAllTasks(): Promise<ModuleTask[]> {
+  const data = await apiGet<{ tasks: ModuleTask[] }>('/api/modules/tasks')
+  return data.tasks
+}
+
+/**
+ * MR-195: настройки ШАБЛОНА — не то же самое, что настройки задачи. Аккаунты в шаблоне
+ * необязательны: по умолчанию он сохраняется без них (созвон 27.08 — «чаще нужны шаблоны
+ * без аккаунтов»), и тогда ключа в настройках просто нет.
+ *
+ * Именно нет, а не пустой массив: `[]` читалось бы как «шаблон снимает выбор аккаунтов»,
+ * тогда как он его не трогает. У настроек задачи поле остаётся обязательным — на запуске
+ * аккаунты нужны всегда, и этот контракт правка не ослабляет.
+ */
+export type ModulePresetSettings = Omit<ModuleTaskSettings, 'accountIds'> & { accountIds?: string[] }
+
 export interface ModulePreset {
   id: string
   name: string
   createdAt: number
-  settings: ModuleTaskSettings
+  settings: ModulePresetSettings
+  color?: string // §7: цветовая метка шаблона (ключ из PRESET_COLORS)
+  owner?: string // §7: владелец персонального шаблона (Маша/Паша) — ПОДПИСЬ, свободный текст
+  /**
+   * MR-196: кто завёл шаблон. Не путать с `owner` (подпись от руки) и с владельцем
+   * пространства: по последнему админа и его сотрудника не различить, оба записаны
+   * одинаково. Правит и удаляет шаблон только автор. У старых записей поля нет.
+   */
+  authorId?: string
 }
 
-export async function saveModulePreset(moduleKey: string, name: string, settings: ModuleTaskSettings) {
-  return apiPost(`${base(moduleKey)}/presets`, { name, settings })
+export async function saveModulePreset(moduleKey: string, name: string, settings: ModulePresetSettings, color?: string, owner?: string) {
+  return apiPost(`${base(moduleKey)}/presets`, { name, settings, color, owner })
 }
 
 export async function fetchModulePresets(moduleKey: string) {
@@ -137,3 +273,117 @@ export async function listModuleKeys() {
 
 /** Legacy neuro-commenting API (backward compat) */
 export { startNeuroCommentingTask, fetchNeuroTask, stopNeuroTask } from './neuroCommentingApi'
+
+// ── §9.11: аудитория задачи (кому написали / кто остался) ──
+
+export interface AudienceRow {
+  /** Цель в едином виде: «@user» или «+380…». */
+  target: string
+  /** Контакт, по которому реально писали, — по нему открывается переписка. */
+  peer?: string
+  accountId?: string
+  accountName?: string
+  reason?: string
+  ts?: string
+}
+
+export interface TaskAudience {
+  /** Кому написали. */
+  sent: AudienceRow[]
+  /** Таких нет в Telegram — в следующий заход брать бессмысленно. */
+  skipped: AudienceRow[]
+  /** Сорвалось из-за аккаунта — этих взять стоит. */
+  failed: AudienceRow[]
+  /** До них не дошли: остановили, кончились лимиты или аккаунты. */
+  remaining: AudienceRow[]
+}
+
+export async function fetchTaskAudience(moduleKey: string, id: string): Promise<{ audience: TaskAudience; total: number }> {
+  return apiGet<{ audience: TaskAudience; total: number }>(`/api/modules/${moduleKey}/tasks/${id}/audience`)
+}
+
+/** §6 (MR-38): сохранённый результат парсинга под совпадающий запрос (кэш-первым). */
+export interface ParserCacheHit {
+  updatedAt: number
+  count: number
+  results: Record<string, unknown>[]
+}
+export async function lookupParserCache(kind: string, settings: Partial<ModuleTaskSettings>): Promise<ParserCacheHit | null> {
+  const r = await apiPost<{ ok: boolean; cache: ParserCacheHit | null }>(`/api/parser/cache/lookup`, { kind, settings })
+  return r.cache
+}
+
+/**
+ * «Последние запросы» парсера (просьба владельца 26.08): что уже искали, сколько
+ * нашлось и когда. Это тот же кэш результатов — отдельного хранилища под список нет.
+ * `name` — имя от человека, а если его не давали, автоподпись из слов запроса.
+ */
+export interface ParserQuery {
+  sig: string
+  kind: string
+  name: string
+  query: string
+  renamed: boolean
+  updatedAt: number
+  count: number
+  watch: boolean
+}
+export async function fetchParserQueries(kind: string, limit = 50): Promise<ParserQuery[]> {
+  const r = await apiGet<{ ok: boolean; queries: ParserQuery[] }>(`/api/parser/queries?kind=${encodeURIComponent(kind)}&limit=${limit}`)
+  return r.queries || []
+}
+export async function fetchParserQuery(sig: string): Promise<ParserQuery & { results: Record<string, unknown>[] }> {
+  const r = await apiGet<{ ok: boolean; query: ParserQuery & { results: Record<string, unknown>[] } }>(`/api/parser/queries/${sig}`)
+  return r.query
+}
+export async function renameParserQuery(sig: string, title: string): Promise<void> {
+  await apiPatch<{ ok: boolean }>(`/api/parser/queries/${sig}`, { title })
+}
+export async function deleteParserQuery(sig: string): Promise<void> {
+  await apiDelete<{ ok: boolean }>(`/api/parser/queries/${sig}`)
+}
+
+/**
+ * Подсказка ключевых слов по уже набранным (просьба владельца 26.08).
+ * `src` — откуда вариант: 'intent' — наш шаблон намерения (бесплатно, без сети),
+ * 'ai' — модель. Процента «релевантности» тут нет намеренно: измерить его нечем.
+ */
+export interface KeywordSuggestion {
+  w: string
+  from: string
+  src: 'intent' | 'ai'
+  why: string
+}
+export async function suggestKeywords(keywords: string[], mode: 'intent' | 'ai' | 'both' = 'both'): Promise<{ items: KeywordSuggestion[]; aiMode: string; reason: string }> {
+  const r = await apiPost<{ ok: boolean; items: KeywordSuggestion[]; aiMode: string; reason: string }>(`/api/parser/keywords/suggest`, { keywords, mode })
+  return { items: r.items || [], aiMode: r.aiMode || '', reason: r.reason || '' }
+}
+
+/**
+ * Слежение за запросом (просьба владельца 24.08): раз в N часов перезапускать тот же
+ * парс, искать новые каналы и отмечать пропавшие. Владельца сервер проставляет сам —
+ * перепроверка тратит его аккаунты и его монеты.
+ */
+export interface ParserWatch {
+  sig: string
+  kind: string
+  label: string
+  ownerId: string | null
+  periodH: number
+  nextRunAt: number
+  lastRunAt: number
+  lastNew: number
+  lastGone: number
+  lastError: string | null
+  failCount: number
+  watch: boolean
+  count: number
+  updatedAt: number
+}
+export async function setParserWatch(kind: string, settings: Partial<ModuleTaskSettings>, watch: boolean, periodH = 24): Promise<void> {
+  await apiPost(`/api/parser/cache/watch`, { kind, settings, watch, periodH })
+}
+export async function fetchParserWatches(onlyErrors = false): Promise<ParserWatch[]> {
+  const r = await apiGet<{ ok: boolean; watches: ParserWatch[] }>(`/api/parser/watches${onlyErrors ? '?errors=1' : ''}`)
+  return r.watches ?? []
+}

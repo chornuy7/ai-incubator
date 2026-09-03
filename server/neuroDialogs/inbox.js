@@ -1,10 +1,20 @@
 import { Api } from 'telegram/tl/index.js'
 
-/** @param {import('telegram').Api.TypeMessage | undefined} msg */
+/**
+ * Короткая строка для СПИСКА диалогов — там нужна одна строчка, а не всё сообщение.
+ * Для самой переписки не годится: обрезка рвала ссылку посреди адреса
+ * («https://t.me/+WNDfu»), и оператор видел не то, что получил человек.
+ * @param {import('telegram').Api.TypeMessage | undefined} msg
+ */
 function previewText(msg) {
   if (!msg) return ''
   if (msg.message?.trim()) return msg.message.trim().slice(0, 120)
-  if (msg.media) {
+  return mediaLabel(msg)
+}
+
+/** Подпись вместо текста, когда сообщение — вложение. @param {object} msg */
+function mediaLabel(msg) {
+  if (msg?.media) {
     const cn = msg.media.className || ''
     if (cn.includes('Photo')) return '📷 Фото'
     if (cn.includes('Document')) return '📎 Файл'
@@ -14,6 +24,12 @@ function previewText(msg) {
     return 'Медиа'
   }
   return ''
+}
+
+/** Полный текст сообщения для окна переписки — без обрезки. @param {object} msg */
+function fullText(msg) {
+  const t = msg?.message?.trim()
+  return t || mediaLabel(msg)
 }
 
 /** @param {number | undefined} ts */
@@ -61,6 +77,60 @@ export async function resolvePeerEntity(client, peerId, opts = {}) {
   throw new Error(`PEER_NOT_FOUND:${peerId}`)
 }
 
+/**
+ * §3: тип медиа сообщения — фронт по нему решает, тянуть превью или показать значок.
+ * Оригиналы мы не храним и не качаем: превью подгружается отдельным запросом (thumb).
+ * @returns {'photo'|'video'|'sticker'|'voice'|'file'|null}
+ */
+export function mediaKind(msg) {
+  const cn = msg?.media?.className || ''
+  if (!cn) return null
+  if (cn.includes('Photo')) return 'photo'
+  const attrs = msg?.media?.document?.attributes || []
+  const has = (n) => attrs.some((a) => `${a.className || ''}`.includes(n))
+  if (has('Sticker')) return 'sticker'
+  if (has('Video')) return 'video'
+  if (has('Audio')) return 'voice'
+  return 'file'
+}
+
+/** Есть ли у медиа превью, которое имеет смысл показывать картинкой. */
+const THUMBABLE = new Set(['photo', 'video', 'sticker'])
+
+/**
+ * §3: превью медиа ON-DEMAND — тянем из Telegram по запросу самый маленький thumb
+ * и НЕ сохраняем на диск. Оригинал (мегабайты видео) не качаем никогда.
+ * @returns {Promise<Buffer|null>} null, если превью нет
+ */
+export async function fetchMessageThumb(client, peerId, messageId, peerOpts = {}) {
+  const entity = await resolvePeerEntity(client, peerId, peerOpts)
+  const found = await client.getMessages(entity, { ids: [Number(messageId)] })
+  const msg = Array.isArray(found) ? found[0] : found
+  if (!msg?.media || !THUMBABLE.has(mediaKind(msg))) return null
+  // Берём САМУЮ КРУПНУЮ доступную миниатюру, укладывающуюся в потолок по весу.
+  // Раньше стояло `thumb: 0` — самый мелкий размер: превью выходили по 660–800 байт,
+  // размытыми квадратиками, а скриншот таблицы превращался в белое пятно. Смысл
+  // превью в том, чтобы УВИДЕТЬ, что прислали, поэтому идём от крупного к мелкому
+  // и останавливаемся на первом, что влезает в лимит (прогон 21–22.07, тест 4.5).
+  // Оригинал (мегабайты видео) по-прежнему не качаем никогда.
+  const MAX_THUMB_BYTES = 40 * 1024
+  const sizes = msg.media?.photo?.sizes || msg.media?.document?.thumbs || []
+  // Индексы миниатюр от крупной к мелкой; если размеров не видно — пробуем 2, 1, 0.
+  const order = sizes.length ? [...sizes.keys()].reverse() : [2, 1, 0]
+  let fallback = null
+  for (const thumb of order) {
+    let buf
+    try {
+      buf = await client.downloadMedia(msg, { thumb })
+    } catch { continue } // размера нет или он недоступен — пробуем следующий
+    if (!buf || !buf.length) continue
+    const out = Buffer.from(buf)
+    if (out.length <= MAX_THUMB_BYTES) return out
+    fallback = out // всё крупнее лимита — запомним на случай, что мельче не найдётся
+  }
+  return fallback
+}
+
 /** @param {import('telegram').TelegramClient} client @param {number} [limit] */
 export async function fetchInboxDialogs(client, limit = 100) {
   const dialogs = await client.getDialogs({ limit })
@@ -79,6 +149,10 @@ export async function fetchInboxDialogs(client, limit = 100) {
         username,
         last,
         time: formatDialogTime(d.message?.date),
+        // Сырая отметка времени нужна фронту для сортировки «новое сверху»: раньше
+        // наружу уходила только готовая строка вроде «28 мая», и пересортировать
+        // список было физически нечем (прогон 21–22.07, тест 4.6).
+        ts: Number(d.message?.date || 0),
         unread: d.unreadCount || 0,
         isBot: !!entity?.bot,
       }
@@ -95,10 +169,12 @@ export async function fetchDialogMessages(client, peerId, limit = 60, beforeId =
     .filter((m) => m?.id && (m.message || m.media) && !m.action)
     .map((m) => ({
       id: m.id,
-      text: previewText(m) || '…',
+      text: fullText(m) || '…',
       time: formatDialogTime(m.date),
       out: !!m.out,
       date: m.date || 0,
+      // §3: только ТИП медиа. Само превью фронт запросит отдельно и лишь для видимых сообщений.
+      ...(m.media ? { media: mediaKind(m), hasThumb: THUMBABLE.has(mediaKind(m)) } : {}),
     }))
     .sort((a, b) => a.date - b.date)
   return { messages: rows, peerId, hasMore: messages.length >= limit }
@@ -107,7 +183,11 @@ export async function fetchDialogMessages(client, peerId, limit = 60, beforeId =
 /** @param {import('telegram').TelegramClient} client @param {string} peerId @param {string} text @param {{ accessHash?: string, username?: string }} [peerOpts] */
 export async function sendDialogMessage(client, peerId, text, peerOpts = {}) {
   const entity = await resolvePeerEntity(client, peerId, peerOpts)
-  const msg = await client.sendMessage(entity, { message: text })
+  // §9: ручной ответ поддерживает Telegram-разметку (жирный/курсив/ссылка).
+  // Markdown с фолбеком на обычный текст, если разметка малформед.
+  let msg
+  try { msg = await client.sendMessage(entity, { message: text, parseMode: 'md' }) }
+  catch { msg = await client.sendMessage(entity, { message: text }) }
   return {
     id: msg.id,
     text: msg.message || text,

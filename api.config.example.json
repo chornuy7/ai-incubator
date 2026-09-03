@@ -1,0 +1,6 @@
+{
+  "//": "Куда dev-сервер отправляет запросы /api. Меняется ОДНО поле — useLiveApi: true — боевой сервер, false — локальный node server/index.js. Vite перезапустится сам, править ничего больше не нужно. Это настройка ТОЛЬКО для разработки: собранная панель всегда ходит на свой домен.",
+  "useLiveApi": false,
+  "liveApiUrl": "https://myrmexgram.ai",
+  "localApiUrl": "http://localhost:3001"
+}

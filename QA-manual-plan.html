@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>QA — ручной прогон · AI Incubator</title>
+<style>
+  :root{
+    --bg:#0e1016; --card:#161a24; --card2:#1c212e; --line:#2a3040; --fg:#e7ebf3; --muted:#9aa4b8;
+    --ok:#0ec464; --bad:#ef4444; --warn:#f59e0b; --accent:#7c8cff; --accent2:#22d3ee;
+  }
+  @media (prefers-color-scheme: light){
+    :root{ --bg:#f5f7fb; --card:#ffffff; --card2:#f0f3f9; --line:#dfe4ee; --fg:#131722; --muted:#5b6478; }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Inter,sans-serif;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:920px;margin:0 auto;padding:28px 20px 80px}
+  header{position:sticky;top:0;background:linear-gradient(var(--bg),var(--bg) 78%,transparent);padding:14px 0 12px;z-index:5}
+  h1{font-size:22px;margin:0 0 4px;letter-spacing:-.02em}
+  .sub{color:var(--muted);font-size:13px}
+  .links{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
+  .links a{display:inline-flex;align-items:center;gap:6px;padding:8px 12px;border-radius:10px;background:var(--card2);border:1px solid var(--line);color:var(--fg);text-decoration:none;font-weight:600;font-size:13px}
+  .links a:hover{border-color:var(--accent)}
+  .bar{margin-top:14px;height:10px;border-radius:99px;background:var(--card2);overflow:hidden;border:1px solid var(--line)}
+  .bar>i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--accent),var(--accent2));transition:width .3s}
+  .barlabel{display:flex;justify-content:space-between;font-size:12px;color:var(--muted);margin-top:6px}
+  .btnsm{background:var(--card2);border:1px solid var(--line);color:var(--muted);border-radius:8px;padding:5px 10px;font-size:12px;cursor:pointer}
+  .btnsm:hover{color:var(--fg)}
+  h2{font-size:16px;margin:26px 0 10px;padding-top:8px;border-top:1px solid var(--line);letter-spacing:-.01em}
+  h2 .tag{font-size:11px;color:var(--muted);font-weight:500}
+  .item{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px 16px;margin:10px 0;transition:border-color .2s}
+  .item.ok{border-color:color-mix(in srgb,var(--ok) 45%,var(--line))}
+  .item.bad{border-color:color-mix(in srgb,var(--bad) 55%,var(--line))}
+  .ihead{display:flex;align-items:flex-start;gap:10px}
+  .code{font-weight:800;color:var(--accent2);font-size:13px;min-width:34px;padding-top:2px}
+  .titlerow{flex:1}
+  .ititle{font-weight:700}
+  .bang{color:var(--bad);font-weight:800}
+  .meta{color:var(--muted);font-size:13px;margin-top:4px}
+  .meta b{color:var(--fg);font-weight:600}
+  .expect{margin-top:8px;padding:9px 11px;background:var(--card2);border-radius:9px;font-size:13.5px}
+  .expect .lbl{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:2px}
+  .auto{display:inline-block;margin-top:8px;font-size:11.5px;padding:3px 9px;border-radius:99px;background:color-mix(in srgb,var(--ok) 15%,transparent);color:var(--ok);font-weight:700}
+  .auto.warnfix{background:color-mix(in srgb,var(--warn) 18%,transparent);color:var(--warn)}
+  .actions{display:flex;gap:8px;margin-top:12px;align-items:center;flex-wrap:wrap}
+  .seg{display:inline-flex;border:1px solid var(--line);border-radius:9px;overflow:hidden}
+  .seg button{background:transparent;border:0;color:var(--muted);padding:7px 14px;font-weight:700;font-size:13px;cursor:pointer}
+  .seg button.on-ok{background:var(--ok);color:#04240f}
+  .seg button.on-bad{background:var(--bad);color:#2a0606}
+  .note{flex:1;min-width:180px;background:var(--card2);border:1px solid var(--line);border-radius:9px;color:var(--fg);padding:7px 10px;font-size:13px;font-family:inherit}
+  .steps{margin:8px 0 0;padding-left:18px}
+  .steps li{margin:2px 0;color:var(--muted);font-size:13.5px}
+  .steps li b{color:var(--fg);font-weight:600}
+  .warnbox{background:color-mix(in srgb,var(--warn) 12%,transparent);border:1px solid color-mix(in srgb,var(--warn) 40%,var(--line));border-radius:12px;padding:12px 14px;font-size:13.5px;margin:10px 0}
+  footer{margin-top:34px;color:var(--muted);font-size:12px;text-align:center}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>QA — ручной прогон</h1>
+    <div class="sub">Ветка <b>feat/a-phase1-status-machine</b> · HEAD <b>74f474e</b> · «куда зайти → что нажать → что должно получиться»</div>
+    <div class="links">
+      <a href="http://localhost:5173" target="_blank">🖥️ Открыть приложение :5173</a>
+      <a href="http://localhost:3001/api/tg/accounts" target="_blank">🔌 API :3001</a>
+      <button class="btnsm" onclick="resetAll()">Сбросить отметки</button>
+    </div>
+    <div class="bar"><i id="pbar"></i></div>
+    <div class="barlabel"><span id="pcount">0 / 0</span><span>отмечено · зелёным подсвечены пункты, что я уже прогнал автоматически</span></div>
+  </header>
+
+  <div class="warnbox">💡 Как пользоваться: по каждому пункту жми <b>ОК</b> или <b>Баг</b>. Значок <span class="bang">(!)</span> = реальное действие в Telegram — только на прогретом аккаунте, с лимитом 1, в самом конце. Отметки сохраняются в браузере.</div>
+
+  <div id="app"></div>
+
+  <footer>AI Incubator · QA-план · сгенерирован автоматически. Приложение уже запущено локально (:5173 фронт, :3001 API).</footer>
+</div>
+
+<script>
+const DATA = [
+  {sec:"0. Подготовка окружения", items:[
+    {c:"0.1",t:"Обновить код",auto:"OK — pull 035bb5a, конфликтов нет",steps:["Терминал: <b>git pull</b>"],exp:"Стянулся последний коммит, ошибок нет."},
+    {c:"0.2",t:"Запустить приложение",auto:"OK — уже запущено",steps:["Открыть <b>http://localhost:5173</b>"],exp:"Панель открывается, слева меню, аккаунты грузятся."},
+    {c:"0.3",t:"Проверка кода",auto:"OK — tsc 0 · тесты 152/152 · build ✓",steps:["<b>npx tsc --noEmit</b>","<b>npm test</b>"],exp:"tsc — 0 ошибок; тесты — все pass."},
+    {c:"0.4",t:"Ключи (.env)",auto:"OK — OPENAI_API_KEY есть",steps:["Проверить .env"],exp:"Есть OPENAI_API_KEY (иначе ИИ/Help Center на шаблонах)."},
+  ]},
+  {sec:"Раздел A — Ядро (профили, статусы, задачи)", items:[
+    {c:"A1",t:"Статусы профилей",auto:"OK — 10/10 плиток",steps:["Меню → <b>Менеджер аккаунтов</b>","Посмотреть плитки над таблицей"],exp:"Активные / В работе / Прогрев / На паузе / FloodWait / На карантине / Спамблок / Невалидные / Замороженные / Реавторизация. Цифры сходятся."},
+    {c:"A2",t:"Пауза / возврат + аудит",auto:"OK — audit from/to+initiator",steps:["В строке аккаунта « » → <b>Пауза</b>","Открыть <b>server/data/audit.log.jsonl</b>","« » → <b>Включить</b>"],exp:"Статус «На паузе» → «Активен»; в логе строки account.status.change с from/to и initiator."},
+    {c:"A3",t:"Guard назначения (главное)",auto:"OK — 409 (pause)",steps:["Поставить 1 акк на паузу","Модуль <b>GGR · Рейтинг</b> → выбрать паузный акк → Запустить"],exp:"Отказ: «Нельзя назначить профили в статусе… (pause)». Задача НЕ стартует. (Вернуть акк в Активен.)"},
+    {c:"A4",t:"Trust score",auto:"OK — карточка + чипы low/mid",steps:["Менеджер аккаунтов → навести на статус","Открыть карточку → вкладка «Здоровье»"],exp:"Виден trust-балл; <40 «прогрев», 40–70 «консервативный». В «Здоровье» — карточка Trust score (§6) с разбивкой."},
+    {c:"A5",t:"Прокси",auto:"OK — check-all / 1:1 работают",steps:["Меню → <b>Прокси</b>","Кнопка проверки живости"],exp:"Правило 1 прокси = 1 аккаунт; проверка показывает «работает / не отвечает»."},
+    {c:"A6",t:"Движок задач",auto:"OK — рестарт = новая задача",steps:["Запустить GGR → <b>Дашборд задач</b>","Пауза → продолжить → стоп → рестарт"],exp:"Задача с ID и инициатором; статусы переключаются; рестарт создаёт НОВУЮ задачу с теми же настройками."},
+    {c:"A7",bang:true,t:"Прогрев",auto:"OK — проверено вживую ранее",steps:["Модуль <b>Прогрев аккаунтов</b>","Выбрать 1 акк + уровень → Запустить → «Логи»"],exp:"Действия по расписанию (просмотр, реакции, чтение); старшие уровни — чаще/реже; ночью пауза."},
+  ]},
+  {sec:"Раздел B — Кампании / UX", items:[
+    {c:"B1",t:"Цели — создать/изменить/удалить",auto:"OK — CRUD",steps:["Меню → <b>Цели</b> → Новая цель → заполнить → Создать","Изменить","Удалить"],exp:"Цель появляется; правки сохраняются; удаление убирает из списка."},
+    {c:"B2",t:"Нейрокомментинг — цель и настройки",auto:"OK + баг семантики ИСПРАВЛЕН",steps:["Меню → <b>Нейрокомментинг</b>","Пикер аккаунтов → Цель из списка","Окно постов (3/5/10) → распределение типов (=100%)","Стоп-слова → <b>Семантический фильтр к цели</b> (чекбокс)","Сохранить пресет → применить чипом"],exp:"Цель выбирается; при сумме типов ≠100% — предупреждение; пресет сохраняется. Чекбокс «Семантический фильтр к цели» ВИДЕН (это был баг — исправлен в 74f474e)."},
+    {c:"B3",t:"Дашборд задач — новый вид (главное)",auto:"OK — пончик + 2 колонки + фильтры",steps:["Меню → <b>Дашборд задач</b>"],exp:"Пончик «Завершение проекта» (% + сегменты + легенда); карточки в 2 колонки с кольцами; фильтры (Все цели/модули/статусы) + «Список/По целям»; кнопки пауза/стоп/рестарт."},
+    {c:"B4",t:"Модалка аккаунта — клик и гео (главное)",auto:"OK — гео-чипы, без «Устройство»",steps:["Менеджер аккаунтов → клик по <b>ИМЕНИ</b> (не по « »)","Вкладка <b>Прокси</b>"],exp:"Клик по имени → окно статистики. «Прокси» → карточка «Гео и рекомендации»: флаг страны + чипы UA/PL/DE/GB/FR + заметка про траст. Вкладки Статус/Здоровье/Trust/Суточные лимиты/Каналы/Папки грузятся. Секции «Устройство и сессия» НЕТ."},
+    {c:"B5",t:"Каналы и парсеры",auto:"OK — парсер+TGStat+экспорт",steps:["«Парсинг данных»","Парсинг по ключам → TGStat с фильтрами","Сохранить в папку → Экспорт CSV/Excel"],exp:"Результаты с ★-рейтингом; повторный парсинг НЕ создаёт дубли; файл скачивается."},
+    {c:"B6",t:"Прочие экраны — без ошибок",auto:"OK — 8 экранов, консоль чистая",steps:["По очереди: CRM·Лиды, Аналитика, Логи, Инбокс, Мейлинг, Автопостинг, Роли","F12 → Console"],exp:"Экраны рендерятся, красных ошибок нет. Роли: Admin / Operator / Sales / Viewer."},
+  ]},
+  {sec:"Раздел C — Боевые проверки (в самом конце, осторожно)", items:[
+    {c:"C1",bang:true,t:"Нейрокомментинг — реальный коммент",auto:"проверено вживую ранее",steps:["1 акк, 1 канал, лимит 1 → Запустить"],exp:"Комментарий реально отправлен, виден в «Логи» и «Дашборде задач»."},
+    {c:"C2",bang:true,t:"Диалоги / Чаттинг-к-цели",auto:"проверено вживую ранее",steps:["НейроДиалоги / Нейрочаттинг → 1 ответ по цели"],exp:"Ответ отправлен по контексту/цели; записан в логи."},
+    {c:"C3",bang:true,t:"Реакции / Масслукинг",auto:"проверено вживую ранее",steps:["Массовые Реакции / Масслукинг → 1 действие"],exp:"Реакция/просмотр выполнены, в логах."},
+    {c:"C4",bang:true,t:"Мейлинг",auto:"проверено вживую (self-тест)",steps:["Только осознанно! Минимальный лимит, прогретый акк"],exp:"ВНИМАНИЕ: массовая рассылка = высокий риск бана. По одному, в последнюю очередь."},
+  ]},
+];
+
+const KEY="qa-manual-plan-v1";
+const state=JSON.parse(localStorage.getItem(KEY)||"{}");
+function save(){localStorage.setItem(KEY,JSON.stringify(state))}
+function set(c,f,v){state[c]=state[c]||{};state[c][f]=v;save();render()}
+function resetAll(){if(confirm("Сбросить все отметки?")){for(const k in state)delete state[k];save();render()}}
+
+function render(){
+  const app=document.getElementById("app");
+  let total=0,done=0;
+  app.innerHTML=DATA.map(sec=>{
+    const items=sec.items.map(it=>{
+      total++; const st=state[it.c]||{}; if(st.v)done++;
+      const cls=st.v==="ok"?"ok":st.v==="bad"?"bad":"";
+      return `<div class="item ${cls}">
+        <div class="ihead">
+          <div class="code">${it.c}</div>
+          <div class="titlerow">
+            <div class="ititle">${it.bang?'<span class="bang">(!)</span> ':''}${it.t}</div>
+            <ol class="steps">${(it.steps||[]).map(s=>`<li>${s}</li>`).join("")}</ol>
+            <div class="expect"><span class="lbl">Ожидаемо</span>${it.exp}</div>
+            <span class="auto ${/баг|исправл/i.test(it.auto)?'warnfix':''}">🤖 авто: ${it.auto}</span>
+          </div>
+        </div>
+        <div class="actions">
+          <div class="seg">
+            <button class="${st.v==='ok'?'on-ok':''}" onclick="set('${it.c}','v','ok')">✓ ОК</button>
+            <button class="${st.v==='bad'?'on-bad':''}" onclick="set('${it.c}','v','bad')">✕ Баг</button>
+          </div>
+          <input class="note" placeholder="заметка / что получили…" value="${(st.n||'').replace(/"/g,'&quot;')}" oninput="set('${it.c}','n',this.value)">
+        </div>
+      </div>`;
+    }).join("");
+    return `<h2>${sec.sec} <span class="tag">${sec.items.length} пункт.</span></h2>${items}`;
+  }).join("");
+  const pct=total?Math.round(done/total*100):0;
+  document.getElementById("pbar").style.width=pct+"%";
+  document.getElementById("pcount").textContent=`${done} / ${total}`;
+}
+render();
+</script>
+</body>
+</html>

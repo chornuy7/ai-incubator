@@ -18,7 +18,7 @@ const MODULE_LABEL: Record<string, string> = {
   'parsing-users': 'Пользователи',
   'parsing-messages': 'Сообщения',
   'parsing-comments': 'Комментарии',
-  tgstat: 'TGStat',
+  tgstat: 'Каталог каналов',
 }
 const PARSER_KEYS = ['parsing', 'parsing-groups', 'parsing-users', 'parsing-messages', 'parsing-comments']
 

@@ -1,14 +1,16 @@
 import { loadSessionString, createClient } from '../tgAuth.js'
 import { getAccountMeta } from '../accountsMeta.js'
 import { mapTelegramError } from '../lib/protection.js'
-import { fetchInboxDialogs, fetchDialogMessages, sendDialogMessage, markDialogRead } from './inbox.js'
+import { fetchInboxDialogs, fetchDialogMessages, sendDialogMessage, markDialogRead, fetchMessageThumb } from './inbox.js'
+import { accountFingerprint } from '../lib/deviceFingerprint.js'
+import { accountProxyUrl } from '../proxies.js'
 
 /** @param {string} accountId @param {(client: import('telegram').TelegramClient, meta: object) => Promise<T>} fn @template T */
 async function withClient(accountId, fn) {
   const meta = await getAccountMeta(accountId)
   const sessionStr = await loadSessionString(accountId)
   if (!sessionStr) throw new Error('NO_SESSION')
-  const client = await createClient(sessionStr, meta.proxy)
+  const client = await createClient(sessionStr, await accountProxyUrl(meta), accountFingerprint(accountId, meta))
   try {
     return await fn(client, meta)
   } finally {
@@ -48,8 +50,12 @@ export async function loadMergedInbox(accountIds, limit = 100) {
       })
     }
   }
+  // Инбокс сортируем как почту: непрочитанные выше, дальше — СВЕЖЕЕ СВЕРХУ.
+  // Раньше вторым ключом шло имя по алфавиту, и диалог, пришедший минуту назад,
+  // оказывался шестым, а октябрьский — ниже майского (прогон 21–22.07, тест 4.6).
   dialogs.sort((a, b) => {
     if (a.unread !== b.unread) return b.unread - a.unread
+    if ((b.ts || 0) !== (a.ts || 0)) return (b.ts || 0) - (a.ts || 0)
     return (a.name || '').localeCompare(b.name || '', 'ru')
   })
   return dialogs
@@ -69,6 +75,46 @@ export async function sendMessage(accountId, peerId, text, peerOpts = {}) {
 
 export async function readDialog(accountId, peerId, peerOpts = {}) {
   return withClient(accountId, (client) => markDialogRead(client, peerId, peerOpts))
+}
+
+/**
+ * §3: кэш превью в ПАМЯТИ (не на диске — храним ровно то, что нельзя не хранить).
+ * Без него каждый ре-рендер списка поднимал бы Telegram-сессию заново: превью
+ * дешёвое, а вот подключение аккаунта — нет, и Telegram такое частое переподключение
+ * не любит. Живёт TTL, размер ограничен — это кэш, а не хранилище.
+ */
+const THUMB_TTL_MS = 10 * 60_000
+const THUMB_MAX_ENTRIES = 300
+/** @type {Map<string, {buf: Buffer|null, at: number}>} */
+const thumbCache = new Map()
+
+function cacheGet(key) {
+  const hit = thumbCache.get(key)
+  if (!hit) return undefined
+  if (Date.now() - hit.at > THUMB_TTL_MS) { thumbCache.delete(key); return undefined }
+  // перекладываем в конец — простой LRU поверх порядка вставки Map
+  thumbCache.delete(key)
+  thumbCache.set(key, hit)
+  return hit.buf
+}
+
+function cacheSet(key, buf) {
+  thumbCache.set(key, { buf, at: Date.now() })
+  while (thumbCache.size > THUMB_MAX_ENTRIES) thumbCache.delete(thumbCache.keys().next().value)
+}
+
+/**
+ * §3: превью сообщения по запросу. Кэш отвечает и на «превью нет» (null),
+ * чтобы не дёргать Telegram повторно из-за сообщений без миниатюры.
+ * @returns {Promise<Buffer|null>}
+ */
+export async function loadMessageThumb(accountId, peerId, messageId, peerOpts = {}) {
+  const key = `${accountId}:${peerId}:${messageId}`
+  const cached = cacheGet(key)
+  if (cached !== undefined) return cached
+  const buf = await withClient(accountId, (client) => fetchMessageThumb(client, peerId, messageId, peerOpts))
+  cacheSet(key, buf)
+  return buf
 }
 
 export { mapTelegramError }

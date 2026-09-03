@@ -1,20 +1,25 @@
-import { useMemo, useState } from 'react'
-import { useParams, Navigate } from 'react-router-dom'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { revealHelpBlock } from '@/features/neuro-commenting/moduleUi'
+import { useParams, Navigate, useNavigate } from 'react-router-dom'
 import {
   Play, Save, Square, Sparkles, Plus, Trash2, FileText, Clock, Globe, Copy, Download,
   ArrowUp, ListChecks, ShoppingCart, History as HistoryIcon, ChevronRight, X, ChevronDown,
   Shield, Settings2, Hash, Eye, Megaphone, Mail, Bookmark, Users, Timer,
   MessageSquareText, AlertTriangle, Check, Star, UploadCloud, Bolt, MessageCircle, Filter, Heart, Smile,
   BarChart3 as BarChartIcon, Ban, Calendar, Cpu, MapPin, SlidersHorizontal, CheckSquare,
-  Volume2, ArrowDown, Search, LayoutGrid, List, Send, ExternalLink, MessagesSquare, Trophy,
-  Tag, Activity, Database, ArrowUpDown, Pencil, RefreshCw, Radio, HelpCircle,
-} from 'lucide-react'
+  Volume2, Search, LayoutGrid, List, Send, ExternalLink, MessagesSquare, Trophy,
+  Tag, Activity, Database, ArrowUpDown, Pencil, RefreshCw, Radio, HelpCircle, Lock } from 'lucide-react'
 import { DIALOGS, type Dialog } from '@/mocks/dialogs'
 import { MODULES, LANGUAGES, type ModuleConfig } from '@/shared/config/modules'
 import { ROUTES } from '@/shared/config/routes'
 import { useApp, activeAccounts } from '@/mocks/store'
+import { useSession } from '@/features/auth/session'
+import { usePlan, planHasModule } from '@/features/billing/plan'
+import { ModuleNotPaid } from '@/features/billing/ModuleNotPaid'
+import { can } from '@/shared/lib/access'
 import { useUi } from '@/shared/lib/uiStore'
 import { seedLogs } from '@/mocks/logs'
+import { startModuleTask, fetchModuleTask, type ModuleTask } from '@/api/modulesApi'
 import { makeResults } from '@/mocks/parseResults'
 import { useMockLoading } from '@/shared/lib/hooks'
 import {
@@ -24,9 +29,15 @@ import { LogsPanel } from '@/widgets/LogsPanel'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { PaywallLock } from '@/features/paywall/Paywall'
 import { ModuleLiveRouter, isLiveModule } from '@/features/modules'
+import { ActionPriceCalc } from '@/features/modules/shared/LaunchCost'
+import { FloatingBar } from '@/features/modules/shared'
 import { cn, compact, uid } from '@/shared/lib/utils'
 import type { ParseResult } from '@/shared/types'
+import { useTabParam } from '@/shared/lib/useTabParam'
+import { lastSeenText } from '@/shared/lib/accountText'
 
+/** Плавный скролл к якорю; если нативный smooth не сработал (некоторые встроенные
+ *  браузеры/webview делают его no-op) — мгновенный доскролл, чтобы кнопка всегда работала. */
 const SYSTEM_PROMPTS_FALLBACK = [
   'Дружелюбный эксперт', 'Краткий и по делу', 'Продающий копирайтер',
   'Нейтральный комментатор', 'Вовлекающий вопрос', 'Поддерживающий тон',
@@ -51,9 +62,31 @@ export function ModuleRunner() {
   const cfg = MODULES[moduleKey]
   const route = ROUTES.find((r) => r.path === `/panel/modules/${moduleKey}`)
   const isNoSub = useApp((s) => s.userState === 'no-sub')
+  const sessionUser = useSession((s) => s.user)
+  const planModules = usePlan((s) => s.modules)
+  // Срок обязателен: без него прямой адрес модуля открывался при ИСТЁКШЕЙ подписке и
+  // упирался в 403 сервера — человек видел пустую страницу вместо внятного «продлите».
+  const planExpiresAt = usePlan((s) => s.expiresAt)
   const loading = useMockLoading(450, [moduleKey])
 
   if (!cfg || !route) return <Navigate to="/panel" replace />
+
+  // Гейт подписки (§5.4): модуль не оплачен — не открываем даже админу.
+  // Набор ещё не загружен — не показываем ни модуль, ни «не оплачено»: иначе первый
+  // вход без кэша мигал бы витриной покупки на честно оплаченном модуле.
+  if (planModules === null) return <div className="space-y-4"><Skeleton className="h-40 rounded-2xl" /><Skeleton className="h-64 rounded-2xl" /></div>
+  if (!planHasModule(planModules, moduleKey, planExpiresAt)) return <ModuleNotPaid title={cfg.title} moduleKey={moduleKey} />
+
+  // RBAC-гейт (§8.1): не-админ без доступа к модулю — прямой заход по URL запрещён.
+  if (sessionUser && !sessionUser.isAdmin && !can(sessionUser.permissions, false, 'module', moduleKey)) {
+    return (
+      <div className="mx-auto mt-16 max-w-md rounded-2xl border border-line bg-elevated p-8 text-center">
+        <Lock size={28} className="mx-auto text-white/40" />
+        <div className="mt-3 text-base font-semibold text-fg">Нет доступа к модулю</div>
+        <div className="mt-1 text-sm text-muted">Ваша роль «{sessionUser.roleName || '—'}» не имеет доступа к «{cfg.title}». Обратитесь к администратору.</div>
+      </div>
+    )
+  }
 
   const inner = isLiveModule(moduleKey)
     ? <ModuleLiveRouter moduleKey={moduleKey} />
@@ -68,6 +101,8 @@ export function ModuleRunner() {
         icon={<route.icon size={22} />}
         actions={<HeaderActions cfg={cfg} />}
       />
+      {/* MR-149: мини-калькулятор цены действия — в шапке КАЖДОГО модуля, перед контентом. */}
+      <ActionPriceCalc moduleKey={moduleKey} />
       {isNoSub ? (
         <PaywallLock>{inner}</PaywallLock>
       ) : loading ? (
@@ -82,12 +117,16 @@ function HeaderActions({ cfg }: { cfg: ModuleConfig }) {
   const pushToast = useApp((s) => s.pushToast)
   const setTasksOpen = useUi((s) => s.setTasksOpen)
   const setCoinsOpen = useUi((s) => s.setCoinsOpen)
+  // Правка 12.08: «О модуле» и «Статьи» — рабочие (не демо). «О модуле» открывает справку
+  // модуля (Help Center по теме модуля), «Статьи» ведут в «Обучение» (база знаний).
+  const setHelpTopic = useUi((s) => s.setHelpTopic)
+  const setHelpOpen = useUi((s) => s.setHelpOpen)
+  const navHeader = useNavigate()
 
   if (cfg.ggrLayout) {
-    const coins = useApp.getState().data.coins
     return (
       <>
-        <div className="hidden items-center gap-1.5 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 sm:flex"><span className="text-[10px] font-bold uppercase text-muted">Баланс</span><span className="text-sm font-bold text-amber-300">{coins.toFixed(2)}</span><Bolt size={13} className="text-amber-400" /></div>
+        {/* §20 (RATING-001): свой виджет «Баланс» убран — он дублировал баланс в шапке приложения. */}
         <div className="hidden items-center gap-1.5 rounded-xl border border-line bg-elevated px-3 py-1.5 sm:flex"><span className="text-[10px] font-bold uppercase text-muted">Проверка</span><span className="text-sm font-bold text-fg">0.20</span><Bolt size={13} className="text-amber-400" /></div>
         <button onClick={() => setCoinsOpen(true)} className="btn-ghost h-10">КУПИТЬ</button>
         <div className="hidden flex-col items-center px-2 leading-tight md:flex"><span className="text-[10px] font-bold uppercase text-muted">Шкала</span><span className="text-xs font-bold text-fg">1.0 — 10.0</span></div>
@@ -97,33 +136,33 @@ function HeaderActions({ cfg }: { cfg: ModuleConfig }) {
   }
 
   if (cfg.dialogsLayout) {
+    // Инлайн-инбокс из нейродиалогов убран (чтение диалогов — в «Обзоре аккаунта»),
+    // поэтому кнопки «Очистить / К диалогам / Загрузить ЛС» (они вели к инбоксу) сняты,
+    // чтобы не вести в никуда. Остаётся только звук уведомлений авто-ответов.
     return (
-      <>
-        <button onClick={() => pushToast({ type: 'info', title: 'Очистить', desc: 'Очистка диалогов (демо).' })} className="btn-ghost h-10"><Trash2 size={15} /> Очистить</button>
-        <button onClick={() => pushToast({ type: 'info', title: 'К диалогам', desc: 'Прокрутка к списку диалогов.' })} className="btn-ghost h-10"><ArrowDown size={15} /> К диалогам</button>
-        <button onClick={() => pushToast({ type: 'info', title: 'Звук уведомлений', desc: 'Переключено (демо).' })} className="btn-icon h-10 w-10"><Volume2 size={16} /></button>
-        <button onClick={() => pushToast({ type: 'info', title: 'Загрузить ЛС (демо)', desc: 'Импорт истории переписок.' })} className="btn-iris h-10"><UploadCloud size={16} /> Загрузить ЛС</button>
-      </>
+      <button onClick={() => pushToast({ type: 'info', title: 'Звук уведомлений', desc: 'Переключено (демо).' })} className="btn-icon h-10 w-10"><Volume2 size={16} /></button>
     )
   }
 
   return (
-    <>
+    // Правка 14.08: кнопки шапки — одним рядом (flex-nowrap), а не переносом на 2 строки при
+    // узком пространстве (как норм выглядит на нейрокомментинге).
+    <div className="flex flex-nowrap items-center gap-2">
       {(cfg.richLayout || cfg.lookingLayout || cfg.warmingLayout || cfg.parserLayout || cfg.participantsLayout) && <>
-        <button onClick={() => pushToast({ type: 'info', title: 'О модуле', desc: `${cfg.title} — справка (демо).` })} className="btn-ghost h-10">О модуле</button>
-        <button onClick={() => pushToast({ type: 'info', title: 'Статьи', desc: 'База знаний (демо).' })} className="btn-ghost h-10">Статьи</button>
+        <button onClick={() => { setHelpTopic(cfg.title); setHelpOpen(true) }} className="btn-ghost h-10 shrink-0 whitespace-nowrap">О модуле</button>
+        <button onClick={() => navHeader('/panel/learning')} className="btn-ghost h-10 shrink-0 whitespace-nowrap">Статьи</button>
       </>}
       {cfg.templateButtons?.map((b) => (
-        <button key={b} onClick={() => pushToast({ type: 'info', title: b, desc: 'Шаблоны настроек (демо).' })} className="btn-ghost h-10">{b === 'Новый шаблон' && <Plus size={15} />}{b}</button>
+        <button key={b} onClick={() => pushToast({ type: 'info', title: b, desc: 'Шаблоны настроек (демо).' })} className="btn-ghost h-10 shrink-0 whitespace-nowrap">{b === 'Новый шаблон' && <Plus size={15} />}{b}</button>
       ))}
       {cfg.extraButtons?.includes('Прошлые проверки') && (
-        <button onClick={() => pushToast({ type: 'info', title: 'Прошлые проверки', desc: 'История GGR (демо).' })} className="btn-ghost h-10"><HistoryIcon size={15} /> Прошлые проверки</button>
+        <button onClick={() => pushToast({ type: 'info', title: 'Прошлые проверки', desc: 'История GGR (демо).' })} className="btn-ghost h-10 shrink-0 whitespace-nowrap"><HistoryIcon size={15} /> Прошлые проверки</button>
       )}
       {cfg.extraButtons?.includes('КУПИТЬ') && (
-        <button onClick={() => setCoinsOpen(true)} className="btn-iris h-10"><ShoppingCart size={15} /> КУПИТЬ</button>
+        <button onClick={() => setCoinsOpen(true)} className="btn-iris h-10 shrink-0 whitespace-nowrap"><ShoppingCart size={15} /> КУПИТЬ</button>
       )}
-      <button onClick={() => setTasksOpen(true)} className="btn-ghost h-10"><ListChecks size={15} /> <span className="hidden sm:inline">Задачи</span></button>
-    </>
+      <button onClick={() => setTasksOpen(true)} className="btn-ghost h-10 shrink-0 whitespace-nowrap"><ListChecks size={15} /> <span className="hidden sm:inline">Задачи</span></button>
+    </div>
   )
 }
 
@@ -464,12 +503,12 @@ function RichModule({ cfg }: { cfg: ModuleConfig }) {
         <div className="card p-0">
           <button onClick={() => setPresetsOpen((v) => !v)} className="flex w-full items-center gap-3 px-4 py-3.5 text-left">
             <span className="grid h-9 w-9 place-items-center rounded-xl bg-iris-500/12 text-iris-400"><Bookmark size={18} /></span>
-            <span className="font-display text-base font-bold text-fg">Пресеты настроек</span>
+            <span className="font-display text-base font-bold text-fg">Шаблоны настроек</span>
             <ChevronDown size={18} className={cn('ml-auto text-muted transition-transform', !presetsOpen && '-rotate-90')} />
           </button>
           {presetsOpen && (
             <div className="border-t border-line p-4">
-              <EmptyState icon={<Bookmark size={22} />} title="Сохранённых пресетов нет" desc="Сохраните текущие настройки, чтобы быстро применять их позже." />
+              <EmptyState icon={<Bookmark size={22} />} title="Сохранённых шаблонов нет" desc="Сохраните текущие настройки, чтобы быстро применять их позже." />
             </div>
           )}
         </div>
@@ -491,7 +530,8 @@ function RichModule({ cfg }: { cfg: ModuleConfig }) {
           </div>
         )}
 
-        <div className="flex flex-col items-center gap-3 rounded-2xl border border-line bg-elevated/40 p-4 sm:flex-row">
+        {/* Липнет к низу: настройки парсера длинные, кнопку не должно уносить за экран. */}
+        <FloatingBar>
           <div className="flex items-center gap-2 text-sm font-semibold text-muted">
             <span className={cn('h-2.5 w-2.5 rounded-full', running ? 'bg-spark-400 animate-pulse' : 'bg-faint')} /> {running ? 'Выполняется' : 'Остановлено'}
           </div>
@@ -505,7 +545,7 @@ function RichModule({ cfg }: { cfg: ModuleConfig }) {
           <div className="flex gap-2">
             {cfg.secondaryAction && <button onClick={() => pushToast({ type: 'success', title: 'Настройки сохранены' })} className="btn-ghost h-11 text-sm"><Save size={15} /> {cfg.secondaryAction}</button>}
           </div>
-        </div>
+        </FloatingBar>
 
         {cfg.progressBar && running && (
           <div className="mt-4 rounded-2xl border border-line bg-elevated/40 p-4">
@@ -538,7 +578,7 @@ function RichModule({ cfg }: { cfg: ModuleConfig }) {
           </div>
           {historyOpen && (
             <div className="border-t border-line p-4">
-              <EmptyState icon={<BarChartIcon size={22} />} title="История пуста" desc="Здесь появятся прошлые запуски реакций." />
+              <EmptyState icon={<BarChartIcon size={22} />} title="Логов пока нет" desc="Здесь появятся прошлые запуски реакций." />
             </div>
           )}
         </div>
@@ -725,10 +765,11 @@ function ParticipantsModule({ cfg }: { cfg: ModuleConfig }) {
           <LaunchStat icon={<Send size={18} />} color="#06b6d4" label={p.unit.title} value={String(p.unit.count)} />
           <LaunchStat icon={<Database size={18} />} color="#0ec464" label={p.unit.limitLabel} value={String(p.unit.limitValue)} />
         </div>
-        <div className="flex flex-col items-center gap-3 rounded-2xl border border-line bg-elevated/40 p-4 sm:flex-row">
+        {/* Липнет к низу: настройки парсера длинные, кнопку не должно уносить за экран. */}
+        <FloatingBar>
           <div className="flex items-center gap-2 text-sm font-semibold text-muted"><span className={cn('h-2.5 w-2.5 rounded-full', running ? 'bg-spark-400 animate-pulse' : 'bg-faint')} /> {running ? 'Выполняется' : 'Остановлено'}</div>
           <div className="flex flex-1 justify-center">{running ? <button className="btn-danger h-11 min-w-[160px]"><Square size={16} /> Остановить</button> : <button onClick={run} disabled={selected.size === 0} className="btn-iris h-11 min-w-[160px]"><Play size={17} /> {cfg.primaryAction}</button>}</div>
-        </div>
+        </FloatingBar>
       </SectionCard>
 
       {/* 4. Results */}
@@ -772,40 +813,16 @@ function ParticipantsModule({ cfg }: { cfg: ModuleConfig }) {
 }
 
 /* ══════════════════════ PARSER LAYOUT (Парсинг каналов) ══════════════════════ */
-const PARSE_CHANNELS = [
-  { name: 'Остеопрактика - остеопатия, биодинамика, массаж', u: 'osteopractika_school', m: 12700 },
-  { name: 'Body_lab_Nazarenko', u: 'massage_nazarenko', m: 327 },
-  { name: 'Лапченко | Wellness Massage', u: 'lapchenko_massage', m: 156 },
-  { name: 'Lay Back', u: 'layback_massage', m: 2100 },
-  { name: 'СТО Мастер', u: 'sto_master_ua', m: 5400 },
-  { name: 'Авторемонт Днепр', u: 'autorepair_dp', m: 890 },
-  { name: 'Dev Hunters', u: 'dev_hunters', m: 3200 },
-  { name: 'Bot Factory', u: 'bot_factory_ua', m: 1450 },
-  { name: 'Massage Space', u: 'massage_space', m: 640 },
-]
-const PARSE_GROUPS = [
-  { name: 'Машинариум: чат для бизнеса', u: 'mashinariumchat', m: 142 },
-  { name: 'Канал "МАШИНА" (обсуждение)', u: 'kanal_mashina_chat', m: 167 },
-  { name: 'КОНТЕНТ МАШИНА - Chat', u: 'content_machine_chat', m: 16 },
-  { name: 'Иномарка бозор чат', u: 'inomarka_mashina_bozor', m: 264 },
-  { name: 'СТО Профи · Чат', u: 'sto_profi_chat', m: 512 },
-  { name: 'Барбершоп Комьюнити', u: 'barber_community', m: 1230 },
-  { name: 'ЖК Новостройки · Обсуждение', u: 'jk_novostroyki', m: 3400 },
-  { name: 'Фуд-корт Днепр', u: 'foodcourt_dp', m: 780 },
-  { name: 'Авто P2P Чат', u: 'auto_p2p_chat', m: 950 },
-]
 const AI_KW = [
   { w: 'car service', p: 88 }, { w: 'auto repair', p: 85 }, { w: 'hire developer', p: 87 },
   { w: 'create bot', p: 82 }, { w: 'wellness', p: 79 }, { w: 'spa massage', p: 84 },
 ]
 
 function ParsingModule({ cfg }: { cfg: ModuleConfig }) {
-  const addTask = useApp((s) => s.addTask)
   const pushToast = useApp((s) => s.pushToast)
   const guardNet = useApp((s) => s.guardNet)
 
-  const AI_SUGGEST = cfg.aiKeywords ?? AI_KW
-  const RESULT_DATA = cfg.key === 'parsing-groups' ? PARSE_GROUPS : PARSE_CHANNELS
+  const AI_SUGGEST = AI_KW
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [tmplOpen, setTmplOpen] = useState(!cfg.templatesCollapsed)
   const [tmplSearch, setTmplSearch] = useState('')
@@ -832,6 +849,15 @@ function ParsingModule({ cfg }: { cfg: ModuleConfig }) {
   const [langDetect, setLangDetect] = useState(false)
   const [running, setRunning] = useState(false)
   const [results, setResults] = useState<{ name: string; u: string; m: number }[]>([])
+  // §3.8: запущенные задачи парсинга — их результаты подтягиваем, пока они живы.
+  const [taskIds, setTaskIds] = useState<string[]>([])
+  const [liveTasks, setLiveTasks] = useState<ModuleTask[]>([])
+  // По задаче на ключевое слово: параллельно, видно по отдельности, падение одной
+  // не уносит остальные. Для одного слова разницы нет.
+  const [splitByKeyword, setSplitByKeyword] = useState(true)
+  // Пока без отдельных контролов в этом экране: 0 = без лимита / любые комментарии.
+  const resLimit = 0
+  const commentsFilter = 0
   const [resView, setResView] = useState<'list' | 'grid'>('list')
   const [resSearch, setResSearch] = useState('')
   const [resSort, setResSort] = useState('')
@@ -842,14 +868,85 @@ function ParsingModule({ cfg }: { cfg: ModuleConfig }) {
   const filteredResults = results.filter((r) => !resSearch || `${r.name} ${r.u}`.toLowerCase().includes(resSearch.toLowerCase()))
     .sort((a, b) => resSort === 'Участники' ? b.m - a.m : resSort === 'Название' ? a.name.localeCompare(b.name) : 0)
 
-  const run = () => {
+  /**
+   * §3.8: запуск НАСТОЯЩИХ задач парсинга. Раньше здесь был мок: локальная псевдо-задача
+   * и захардкоженный список результатов через setTimeout — поэтому ничего и не сохранялось.
+   *
+   * `splitByKeyword` — по задаче на каждое ключевое слово. Так они идут параллельно,
+   * видны в дашборде по отдельности и падение одной не уносит остальные.
+   */
+  const run = async () => {
     if (!guardNet(cfg.primaryAction)) return
     if (selected.size === 0) return pushToast({ type: 'error', title: 'Аккаунты не выбраны', desc: 'Выберите хотя бы один аккаунт.' })
     if (keywords.length === 0) return pushToast({ type: 'error', title: 'Нет ключевых слов' })
+
     setRunning(true)
-    addTask({ module: cfg.key, title: `${cfg.title} · ${keywords.length} кл. слов`, status: 'running', progress: 15, accountsCount: selected.size, logCount: 0 })
-    setTimeout(() => { setResults(RESULT_DATA); setRunning(false); pushToast({ type: 'success', title: 'Парсинг завершён', desc: `Найдено ${RESULT_DATA.length} ${cfg.key === 'parsing-groups' ? 'групп' : 'каналов'}.` }) }, 1400)
+    setResults([])
+    const groups = splitByKeyword ? keywords.map((k) => [k]) : [keywords]
+    // Аккаунты делим между задачами: один аккаунт в двух задачах разом работать не может.
+    const accs = [...selected]
+    const started: string[] = []
+    const failed: string[] = []
+    for (let i = 0; i < groups.length; i++) {
+      const mine = groups.length > 1 ? accs.filter((_, j) => j % groups.length === i) : accs
+      if (!mine.length) { failed.push(`${groups[i].join(', ')}: не хватило аккаунтов`); continue }
+      try {
+        const task = await startModuleTask(cfg.key, {
+          accountIds: mine,
+          keywords: groups[i],
+          searchMode: method,
+          minMembers,
+          maxMembers,
+          resultLimit: resLimit,
+          commentFilter: commentsFilter,
+          langDetection: langDetect,
+          intersect: kwMode === 1,
+          protectionLevel: aiProtect ? 1 : 0,
+        })
+        started.push(task.id)
+      } catch (e) {
+        failed.push(`${groups[i].join(', ')}: ${e instanceof Error ? e.message : 'ошибка'}`)
+      }
+    }
+    setTaskIds(started)
+    setRunning(false)
+    if (started.length) {
+      pushToast({
+        type: 'success',
+        title: started.length > 1 ? `Запущено задач: ${started.length}` : 'Парсинг запущен',
+        desc: failed.length ? `Не запущено: ${failed.length}` : 'Результаты появятся ниже по мере поиска',
+      })
+    }
+    if (failed.length) pushToast({ type: 'error', title: 'Часть задач не запустилась', desc: failed.slice(0, 2).join('; ') })
   }
+
+  // Пока задачи живы — тянем их результаты и складываем в общий список (без дублей).
+  useEffect(() => {
+    if (!taskIds.length) return
+    let stop = false
+    const tick = async () => {
+      const tasks = await Promise.all(taskIds.map((id) => fetchModuleTask(cfg.key, id).catch(() => null)))
+      if (stop) return
+      const seen = new Set<string>()
+      const merged: { name: string; u: string; m: number }[] = []
+      for (const t of tasks) {
+        for (const r of (t?.results ?? []) as Record<string, unknown>[]) {
+          const u = String(r.username ?? '')
+          const k = u || String(r.id ?? '')
+          if (!k || seen.has(k)) continue
+          seen.add(k)
+          merged.push({ name: String(r.title ?? u), u, m: Number(r.members ?? 0) })
+        }
+      }
+      setResults(merged)
+      setLiveTasks(tasks.filter(Boolean) as ModuleTask[])
+      const done = tasks.every((t) => !t || t.status === 'done' || t.status === 'stopped' || t.status === 'error')
+      if (done) { stop = true; return }
+      setTimeout(() => { if (!stop) void tick() }, 3000)
+    }
+    void tick()
+    return () => { stop = true }
+  }, [taskIds, cfg.key])
 
   return (
     <div className="space-y-4">
@@ -1014,12 +1111,37 @@ function ParsingModule({ cfg }: { cfg: ModuleConfig }) {
           <LaunchStat icon={<Search size={18} />} color="#06b6d4" label="Ключевые слова" value={String(keywords.length)} />
           <LaunchStat icon={<Database size={18} />} color="#0ec464" label="Макс. результатов" value={limitChip === '∞' ? '∞' : String(limitChip)} />
         </div>
-        <div className="flex flex-col items-center gap-3 rounded-2xl border border-line bg-elevated/40 p-4 sm:flex-row">
+        {/* Липнет к низу: настройки парсера длинные, кнопку не должно уносить за экран. */}
+        <FloatingBar>
           <div className="flex items-center gap-2 text-sm font-semibold text-muted"><span className={cn('h-2.5 w-2.5 rounded-full', running ? 'bg-spark-400 animate-pulse' : 'bg-faint')} /> {running ? 'Выполняется' : 'Остановлено'}</div>
-          <div className="flex flex-1 justify-center">
-            {running ? <button className="btn-danger h-11 min-w-[180px]"><Square size={16} /> Остановить</button> : <button onClick={run} disabled={selected.size === 0} className="btn-iris h-11 min-w-[180px]"><Play size={17} /> {cfg.primaryAction}</button>}
+          <div className="flex flex-1 flex-col items-center gap-2">
+            {/* §3.8: одно ключевое слово — одна задача. Идут параллельно, каждую видно
+                в дашборде отдельно, и падение одной не уносит остальные. */}
+            {keywords.length > 1 && (
+              <label className="flex cursor-pointer items-center gap-2 text-xs text-muted">
+                <input type="checkbox" checked={splitByKeyword} onChange={(e) => setSplitByKeyword(e.target.checked)} className="h-4 w-4 accent-spark" />
+                Отдельная задача на каждое слово — запустится {keywords.length} задач параллельно
+              </label>
+            )}
+            {running
+              ? <button className="btn-danger h-11 min-w-[180px]" disabled><Square size={16} /> Запускаю…</button>
+              : <button onClick={() => void run()} disabled={selected.size === 0} className="btn-iris h-11 min-w-[180px]"><Play size={17} /> {cfg.primaryAction}</button>}
           </div>
-        </div>
+        </FloatingBar>
+
+        {/* Прогресс живых задач: раньше здесь крутился фейковый таймер на 1.4 секунды. */}
+        {liveTasks.length > 0 && (
+          <div className="mt-3 space-y-1.5">
+            {liveTasks.map((t) => (
+              <div key={t.id} className="flex items-center gap-2 rounded-lg border border-line bg-elevated/40 px-3 py-2 text-xs">
+                <span className={cn('h-2 w-2 shrink-0 rounded-full',
+                  t.status === 'running' ? 'bg-spark-400 animate-pulse' : t.status === 'error' ? 'bg-rose-400' : 'bg-faint')} />
+                <span className="truncate text-muted">{(t.settings?.keywords || []).join(', ') || t.id}</span>
+                <span className="ml-auto shrink-0 text-white/50">{t.progress?.done ?? 0} найдено · {t.status}</span>
+              </div>
+            ))}
+          </div>
+        )}
       </SectionCard>
 
       {/* 5. Results */}
@@ -1134,7 +1256,7 @@ function GgrModule({ cfg }: { cfg: ModuleConfig }) {
                 </div>
               </div>
               <div className="mt-4 grid grid-cols-2 gap-2.5">
-                {[['Гео', `${({ ua: '🇺🇦', ru: '🇷🇺', kz: '🇰🇿', pl: '🇵🇱', de: '🇩🇪' } as Record<string, string>)[active.country] ?? ''} ${active.country.toUpperCase()}`], ['Возраст группы', active.lastSeen], ['Прошлый балл', `${((active.ggr ?? 60) / 10).toFixed(1)}`], ['Активность', 'нет активности']].map(([k, v]) => (
+                {[['Гео', `${({ ua: '🇺🇦', ru: '🇷🇺', kz: '🇰🇿', pl: '🇵🇱', de: '🇩🇪' } as Record<string, string>)[active.country] ?? ''} ${active.country.toUpperCase()}`], ['Возраст группы', lastSeenText(active.lastSeenAt)], ['Прошлый балл', `${((active.ggr ?? 60) / 10).toFixed(1)}`], ['Активность', 'нет активности']].map(([k, v]) => (
                   <div key={k} className="rounded-xl border border-line bg-elevated p-3"><div className="text-xs text-muted">{k}</div><div className="mt-0.5 font-semibold text-fg">{v}</div></div>
                 ))}
               </div>
@@ -1232,7 +1354,7 @@ function DialogsModule({ cfg }: { cfg: ModuleConfig }) {
   const [aiEnabled, setAiEnabled] = useState(true)
   const [promptIdx, setPromptIdx] = useState(0)
   const [running, setRunning] = useState(false)
-  const [view, setView] = useState<'visual' | 'logs'>('visual')
+  const [view, setView] = useTabParam<'visual' | 'logs'>('visual', 'view')
   const [grid, setGrid] = useState(false)
   const [search, setSearch] = useState('')
   const [activeId, setActiveId] = useState<string | null>(null)
@@ -1638,7 +1760,8 @@ function WarmingModule({ cfg }: { cfg: ModuleConfig }) {
             <div><div className="text-sm font-bold text-rose-300">Проблемы с конфигурацией</div><div className="text-xs text-muted">Выберите хотя бы один аккаунт</div></div>
           </div>
         )}
-        <div className="flex flex-col items-center gap-3 rounded-2xl border border-line bg-elevated/40 p-4 sm:flex-row">
+        {/* Липнет к низу: настройки парсера длинные, кнопку не должно уносить за экран. */}
+        <FloatingBar>
           <div className="flex items-center gap-2 text-sm font-semibold text-muted">
             <span className={cn('h-2.5 w-2.5 rounded-full', running ? 'bg-spark-400 animate-pulse' : 'bg-faint')} /> {running ? 'Выполняется' : 'Остановлено'}
           </div>
@@ -1649,7 +1772,7 @@ function WarmingModule({ cfg }: { cfg: ModuleConfig }) {
               <button onClick={run} disabled={selected.size === 0} className="btn-iris h-11 min-w-[180px]"><Play size={17} /> {cfg.primaryAction}</button>
             )}
           </div>
-        </div>
+        </FloatingBar>
         {running && <div className="mt-4"><LogsPanel logs={logs} emptyText={cfg.logEmpty} title="Логи выполнения" live /></div>}
       </SectionCard>
     </div>
@@ -1775,7 +1898,8 @@ function LookingModule({ cfg }: { cfg: ModuleConfig }) {
             <div><div className="text-sm font-bold text-rose-300">Проблемы с конфигурацией</div><div className="text-xs text-muted">Выберите хотя бы один аккаунт</div></div>
           </div>
         )}
-        <div className="flex flex-col items-center gap-3 rounded-2xl border border-line bg-elevated/40 p-4 sm:flex-row">
+        {/* Липнет к низу: настройки парсера длинные, кнопку не должно уносить за экран. */}
+        <FloatingBar>
           <div className="flex items-center gap-2 text-sm font-semibold text-muted">
             <span className={cn('h-2.5 w-2.5 rounded-full', running ? 'bg-spark-400 animate-pulse' : 'bg-faint')} /> {running ? 'Выполняется' : 'Остановлено'}
           </div>
@@ -1786,14 +1910,14 @@ function LookingModule({ cfg }: { cfg: ModuleConfig }) {
               <button onClick={run} disabled={selected.size === 0} className="btn-primary h-11 min-w-[180px]"><Play size={17} /> {cfg.primaryAction}</button>
             )}
           </div>
-        </div>
+        </FloatingBar>
       </SectionCard>
 
       {/* 4. View history */}
       <div className="card p-0">
         <div className="flex flex-wrap items-center gap-3 px-4 py-3.5">
           <span className="grid h-9 w-9 place-items-center rounded-xl bg-iris-500/12 text-iris-400"><HistoryIcon size={18} /></span>
-          <span className="font-display text-base font-bold text-fg">История просмотров</span>
+          <span className="font-display text-base font-bold text-fg">Логи просмотров</span>
           <span className="rounded-md bg-elevated px-1.5 py-0.5 text-xs font-bold text-muted">1</span>
           <button onClick={() => pushToast({ type: 'info', title: 'Вся история', desc: 'Открываю историю (демо).' })} className="btn-ghost ml-auto h-8 text-xs">Вся история →</button>
           <button onClick={() => setHistoryOpen((v) => !v)} className="btn-icon h-8 w-8"><ChevronDown size={16} className={cn('transition-transform', !historyOpen && '-rotate-90')} /></button>
@@ -1827,9 +1951,10 @@ function LookRow({ icon, label, sub, children }: { icon: React.ReactNode; label:
 function SectionCard({ icon, title, badge, right, children }: { icon: React.ReactNode; title: string; badge?: string; right?: React.ReactNode; children: React.ReactNode }) {
   const setHelpTopic = useUi((s) => s.setHelpTopic)
   const setHelpOpen = useUi((s) => s.setHelpOpen)
+  const rootRef = useRef<HTMLDivElement>(null)
 
   return (
-    <div className="card p-0">
+    <div ref={rootRef} className="card p-0">
       <div className="flex flex-wrap items-center gap-3 border-b border-line px-4 py-3.5">
         <span className="grid h-9 w-9 place-items-center rounded-xl bg-spark-500/12 text-spark-400">{icon}</span>
         <span className="font-display text-base font-bold text-fg">{title}</span>
@@ -1841,7 +1966,7 @@ function SectionCard({ icon, title, badge, right, children }: { icon: React.Reac
             className="grid h-8 w-8 place-items-center rounded-xl bg-spark-gradient text-[#04150c] shadow-pop transition-transform hover:scale-[1.03]"
             title="Help Center"
             aria-label="Help Center"
-            onClick={() => { setHelpTopic(title); setHelpOpen(true) }}
+            onClick={() => { setHelpTopic(title); setHelpOpen(true); revealHelpBlock(rootRef.current) }}
           >
             <HelpCircle size={16} />
           </button>

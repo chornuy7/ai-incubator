@@ -7,6 +7,9 @@ export type Theme = 'dark' | 'light'
 export type AccountStatus =
   | 'active'
   | 'working'
+  | 'warming'
+  | 'pause'
+  | 'floodwait'
   | 'quarantine'
   | 'spamblock'
   | 'invalid'
@@ -20,18 +23,111 @@ export interface TgAccount {
   phone: string
   username: string
   role: string
-  project: string
   country: string // код флага: ua/ru/kz/pl
   status: AccountStatus
-  lastSeen: string // "отлёжка"
-  proxy: string
+  /**
+   * Когда аккаунт последний раз менялся — МОМЕНТ ВРЕМЕНИ (ISO), а не «11 ч».
+   *
+   * Сервер отдавал уже готовую фразу, и по ней нельзя было ни отсортировать, ни
+   * пересчитать в часовой пояс читателя, ни перевести интерфейс. Формулировку строит тот,
+   * кто её показывает.
+   */
+  lastSeenAt: string | null
+  /**
+   * Прокси аккаунта — ТОЛЬКО ссылка на каталог.
+   *
+   * Собранной строки подключения здесь больше нет: она содержит логин и пароль, и в
+   * ответе API это выглядело как `socks5://kcfdfepc:zvkbhwey@138.201.202.99:7569` —
+   * рабочие доступы уезжали в браузер. Для показа есть `proxyLabel`.
+   */
+  proxyId?: string | null
+  /** Подпись прокси для таблицы: имя из каталога либо `хост:порт`. Без логина и пароля. */
+  proxyLabel?: string
+  /** §6.3 (AM-002): прокси рабочий (нет прокси или не 'dead'). false — мёртвый прокси, аккаунт не предлагаем для запуска. */
+  proxyOk?: boolean
+  /** MR-131: у аккаунта вообще нет прокси (прямое подключение) — тоже зона риска, отдельно от мёртвого прокси. */
+  noProxy?: boolean
+  /** MR-131: «зона риска» с конкретикой. Оси: прокси, статус/здоровье, гео (MR-292). */
+  risk?: {
+    level: 'none' | 'low' | 'medium' | 'high'
+    factors: { kind: 'proxy' | 'status' | 'trust' | 'geo'; text: string }[]
+    proxyIssue: boolean
+    statusIssue: boolean
+  }
+  /**
+   * MR-292: ЧТО именно с аккаунтом и что с этим делать.
+   *
+   * До этого ограничение было одно на все случаи — «Спамблок», — хотя виды различаются
+   * сроком, шансом снятия и тем, что вообще делать с аккаунтом: временный отпустит сам,
+   * вечный снимается только апелляцией, бан платформы не снимается вовсе.
+   */
+  limit?: {
+    kind: 'none' | 'temporary' | 'permanent' | 'banned' | 'reauth'
+    label: string
+    /** Что делать — словами оператора. */
+    what: string
+    /** Срок, если его назвал САМ Telegram. Наши догадки сюда не попадают. */
+    until: number | null
+  }
+  /**
+   * MR-297: жалоба через @SpamBot — когда подали и чем пока кончилась.
+   *
+   * `sent` — бот принял, `stalled` — нажали, но подтверждения не дождались,
+   * `cleared` — ограничение снято, `unknown` — ответ не разобран.
+   */
+  appeal?: { state: 'sent' | 'stalled' | 'cleared' | 'unknown'; at: number | null } | null
+  /**
+   * Гео: страна аккаунта против страны прокси. Это НАША оценка риска, а не вердикт
+   * Telegram — платформа причину ограничения не называет никогда.
+   */
+  geo?: { mismatch: boolean; text: string } | null
   ggr?: number // GramGPT Рейтинг 0..100
-  tgSessionId?: string // id сессии на TG API сервере
+  /** Есть ли облачный пароль. Сам пароль наружу не отдаётся никогда — только признак. */
+  has2fa?: boolean
+  trustScore?: number // §3.3 кэш trust score 0..100
+  trustBand?: 'low' | 'mid' | 'high'
   createdAt: number
   inTrash?: boolean
+  /** Заметка ОПЕРАТОРА. Служебные пометки сюда не пишутся — для них `originCode`. */
   note?: string
-  /** Аккаунт занят running-задачей другого (или этого) модуля */
-  busyIn?: { moduleKey: string; taskId: string; moduleLabel: string }
+  /**
+   * Откуда аккаунт взялся: `IMPORT_TDATA`, `IMPORT_SESSION`, `MANUAL`.
+   *
+   * Раньше система писала это фразой в `note` — то есть в поле оператора: сорок семь
+   * аккаунтов стояли с чужой заметкой, а своя им была уже некуда. Текст по коду собирает
+   * интерфейс.
+   */
+  originCode?: string | null
+  /** Есть ли у аккаунта живая строка сессии. Без неё аккаунт показывается, но не работает. */
+  hasSession?: boolean
+  /** Аккаунт выделен под ревизию базы парсера (крон раз в 12 часов). Метка ставится в админке. */
+  service?: boolean
+  /**
+   * Аккаунт ПЛАТФОРМЫ, а не клиента: заведён импортом с отметкой «для платформы».
+   * Только такие могут дежурить по ревизии базы (правка 27.08).
+   */
+  platform?: boolean
+  /** До какого времени держится временный статус (спамблок/флудвейт/карантин). */
+  statusUntil?: number | null
+  /**
+   * Почему статус выставлен — КОД и числа к нему, а не готовая фраза.
+   *
+   * В базе рядом с кодом лежала его же формулировка по-русски, причём у части записей код
+   * был пуст, а числа («trust 74 > 70») вплавлены в текст и никаким запросом оттуда не
+   * доставались. Текст собирает интерфейс — см. `statusText`.
+   */
+  statusCode?: string | null
+  statusParams?: Record<string, unknown>
+  /** MR: когда аккаунт последний раз явно проверяли на живость (?verify). null — ни разу. */
+  lastCheckedAt?: number | null
+  /** MR: результат последней явной проверки — true жив, false не ответил, null не проверяли. */
+  lastCheckOk?: boolean | null
+  /** Аккаунт занят задачей другого (или этого) модуля. taskStatus — running/paused/… */
+  busyIn?: {
+    moduleKey: string; taskId: string; moduleLabel: string; taskStatus?: string
+    /** Многомодульность (20.08): все модули, где аккаунт занят (busyIn — первый из них). */
+    modules?: { moduleKey: string; moduleLabel: string }[]
+  }
 }
 
 export type TaskStatus = 'running' | 'paused' | 'done' | 'error' | 'queued'
@@ -55,6 +151,11 @@ export interface LogEntry {
   level: LogLevel
   account?: string
   message: string
+  // Поля Фазы 0 (§3.1): контекст события задачи.
+  module?: string
+  initiator?: string
+  code?: string
+  reason?: string
 }
 
 export interface Plan {
@@ -142,6 +243,11 @@ export interface ParseResult {
 export interface AccountStats {
   live: boolean
   busyIn: { moduleKey: string; taskId: string; moduleLabel: string } | null
+  /**
+   * Пауза при переходе аккаунта между модулями: из какого модуля вышел, сколько
+   * назначено и сколько осталось. `null` — паузы сейчас нет.
+   */
+  switchPause: { fromModule: string; fromLabel: string; coolMs: number; until: number; leftMs: number; text: string } | null
   profile: {
     id: string | null
     firstName: string | null
@@ -161,12 +267,24 @@ export interface AccountStats {
     configured: boolean
     working: boolean | null
     checkedAt: number | null
+    /** none — прокси не назначен, down — не отвечает, ok — рабочий, unknown — не проверялся. */
+    state?: 'none' | 'down' | 'ok' | 'unknown'
+    /** Человеческая причина вместо «неизвестной ошибки». */
+    problem?: string | null
   }
   status: {
     valid: boolean
+    /** Данные из базы — живой проверки сейчас не делали (кнопка «Проверить» её запускает). */
+    fromCache?: boolean
+    /** Когда проверяли по-настоящему в последний раз. */
+    lastValidAt?: number | null
+    /** Проверку не довели до конца: причина в прокси, а не в аккаунте. */
+    checkBlocked?: 'no_proxy' | 'proxy_down' | null
+    checkNote?: string | null
     sessionOk: boolean
     spamblock: 'clean' | 'blocked' | 'unknown'
     spamblockText: string | null
+    spamblockAt: number | null // MR-63: когда спамблок проверяли в последний раз
     warmingDays: number
     warmingActive: boolean
     accountStatus: string
@@ -175,6 +293,7 @@ export interface AccountStats {
     addedAt: number | null
     lastCheckAt: number | null
     proxyCheckAt: number | null
+    spamblockAt: number | null // MR-63
   }
   health: {
     score: number
@@ -185,6 +304,14 @@ export interface AccountStats {
     score: number
     risk: 'low' | 'medium' | 'high'
     factors: { key: string; label: string; positive: boolean }[]
+  }
+  trust: {
+    score: number
+    band: 'low' | 'mid' | 'high'
+    action: 'autostop' | 'conservative' | 'pool'
+    label: string
+    hint: string
+    parts: { flood: number; bans: number; actions: number; age: number }
   }
   activity: { ts: string; type: string; label: string; target?: string; level: string; module: string }[]
   role: string | null

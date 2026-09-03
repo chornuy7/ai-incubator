@@ -4,8 +4,16 @@ import { fileURLToPath } from 'url'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
-/** Корневая папка для всех общих JSON-хранилищ фич (папки целей, ИИ-настройки, ЧС и т.д.). */
-export const DATA_DIR = path.join(__dirname, '..', 'data')
+/**
+ * Корневая папка для всех общих JSON-хранилищ фич (папки целей, ИИ-настройки, ЧС и т.д.).
+ *
+ * Переопределяется через DATA_DIR — этим пользуются тесты. Раньше путь был зашит намертво,
+ * и `npm test` писал задачи прямо в БОЕВОЙ `server/data`: в дашборде копились задачи с
+ * `acc_test_1`, рядом лежали папки-призраки вроде `ggr_progress_test`, и при разборе
+ * реальных логов это сбивало (замечено владельцем 24.08). Значение читается один раз при
+ * импорте — значит выставлять переменную нужно ДО первого импорта, в прелоаде тестов.
+ */
+export const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', 'data')
 
 /** @param {string} relPath относительный путь внутри server/data */
 export function dataPath(relPath) {
@@ -37,5 +45,48 @@ export async function writeJson(file, value) {
   await fs.mkdir(path.dirname(file), { recursive: true })
   const tmp = `${file}.${process.pid}.${Date.now()}.tmp`
   await fs.writeFile(tmp, JSON.stringify(value, null, 2), 'utf8')
-  await fs.rename(tmp, file)
+  // На Windows rename падает с EPERM/EBUSY, если файл в этот момент кто-то держит
+  // открытым (антивирус, редактор, параллельное чтение). Данные при этом целы —
+  // достаточно подождать и повторить, иначе теряется запись метаданных аккаунта.
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await fs.rename(tmp, file)
+      return
+    } catch (e) {
+      const retriable = e?.code === 'EPERM' || e?.code === 'EBUSY' || e?.code === 'EACCES'
+      if (!retriable || attempt >= 5) {
+        try { await fs.unlink(tmp) } catch { /* временный файл уже убран */ }
+        throw e
+      }
+      await new Promise((r) => setTimeout(r, 40 * (attempt + 1)))
+    }
+  }
+}
+
+// Очередь операций на каждый файл — сериализует read-modify-write, чтобы два
+// параллельных изменения не затирали друг друга (потерянное обновление).
+const _fileChains = new Map()
+
+/**
+ * Безопасный read-modify-write одного файла (в рамках процесса). Мутатор получает
+ * текущее значение и возвращает новое; если вернул undefined — запись пропускается.
+ * Операции над ОДНИМ файлом выполняются строго по очереди.
+ * @template T
+ * @param {string} file абсолютный путь
+ * @param {(current: T) => T | undefined | Promise<T | undefined>} mutator
+ * @param {T} fallback значение, если файла нет
+ * @returns {Promise<T | undefined>}
+ */
+export function mutateJson(file, mutator, fallback) {
+  const prev = _fileChains.get(file) || Promise.resolve()
+  const run = prev.then(async () => {
+    const current = await readJson(file, fallback)
+    const next = await mutator(current)
+    if (next !== undefined) await writeJson(file, next)
+    return next
+  })
+  // В цепочке держим версию, которая никогда не реджектит, — иначе одна ошибка
+  // заблокировала бы все последующие операции над файлом.
+  _fileChains.set(file, run.catch(() => {}))
+  return run
 }

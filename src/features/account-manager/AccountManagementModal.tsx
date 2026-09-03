@@ -1,30 +1,39 @@
 import { useEffect, useState, useCallback } from 'react'
-import {
-  User, Globe, BarChart3, Calendar, Zap, HeartPulse, Hash, FolderClosed,
-  Copy, Check, ShieldCheck, ShieldAlert, ShieldQuestion, Loader2, RefreshCw, Unlock, AlertCircle,
-} from 'lucide-react'
-import { Modal, Avatar } from '@/shared/ui'
+import { WorkTab } from './WorkTab'
+import { HistoryTab } from './HistoryTab'
+import { User, Globe, BarChart3, Calendar, Zap, HeartPulse, Hash, History, Copy, Check, ShieldCheck, ShieldAlert, ShieldQuestion, Loader2, RefreshCw, Unlock, AlertCircle, Server, LogOut, MessageSquare, Clock } from 'lucide-react'
+import { Modal, Avatar, Segmented } from '@/shared/ui'
 import { cn } from '@/shared/lib/utils'
 import { useApp } from '@/mocks/store'
+import { confirmDialog } from '@/shared/lib/dialog'
+import { ChangeProxyModal } from './ChangeProxyModal'
+import { fetchProxies } from '@/api/proxiesApi'
 import {
-  fetchAccountStats, fetchAccountChannels, fetchAccountFolders, releaseAccountLock,
+  fetchAccountStats, fetchAccountChannels, leaveAccountChannel, releaseAccountLock,
+  fetchAccountDaily, fetchAccountChannelMessages, type AccountDaily, type ChannelMessage,
 } from '@/api/accountsApi'
-import type { TgAccount, AccountStats, AccountChannel, AccountFolder } from '@/shared/types'
+import type { TgAccount, AccountStats, AccountChannel } from '@/shared/types'
+import { FLAGS as GEO_FLAGS, COUNTRY_NAME } from '@/shared/config/geo'
 
-type TabKey = 'profile' | 'proxy' | 'status' | 'dates' | 'actions' | 'health' | 'channels' | 'folders'
+// MR-129 (10.08): табы переставлены по значимости и сокращены. «Статус» и «Действия»
+// переехали в шапку (статус уже там, кнопки-проверки — рядом с ним), «Даты» — в Профиль.
+// «Здоровье» поднято вперёд (сверхважный критерий). MR-129: вкладку «Группы» (Telegram-папки)
+// убрали — она всегда была пустой и дублировала «Каналы» (там и каналы, и группы).
+export type TabKey = 'profile' | 'health' | 'proxy' | 'work' | 'history' | 'channels'
 
-const TABS: { key: TabKey; label: string; icon: React.ReactNode }[] = [
+export const TABS: { key: TabKey; label: string; icon: React.ReactNode }[] = [
   { key: 'profile', label: 'Профиль', icon: <User size={15} /> },
-  { key: 'proxy', label: 'Прокси', icon: <Globe size={15} /> },
-  { key: 'status', label: 'Статус', icon: <BarChart3 size={15} /> },
-  { key: 'dates', label: 'Даты', icon: <Calendar size={15} /> },
-  { key: 'actions', label: 'Действия', icon: <Zap size={15} /> },
   { key: 'health', label: 'Здоровье', icon: <HeartPulse size={15} /> },
+  { key: 'proxy', label: 'Прокси', icon: <Globe size={15} /> },
+  { key: 'work', label: 'Работа', icon: <Zap size={15} /> },
+  // MR-122 (LOG-003): детальная история действий аккаунта — рядом со сводкой «Работа».
+  { key: 'history', label: 'История', icon: <History size={15} /> },
   { key: 'channels', label: 'Каналы', icon: <Hash size={15} /> },
-  { key: 'folders', label: 'Папки', icon: <FolderClosed size={15} /> },
 ]
 
-const FLAGS: Record<string, string> = { UA: '🇺🇦', RU: '🇷🇺', KZ: '🇰🇿', PL: '🇵🇱', DE: '🇩🇪' }
+// Флаг/название страны по коду (регистр не важен) — полный набор из geo.ts (14 стран).
+const flagOf = (code?: string | null) => (code ? GEO_FLAGS[code.toLowerCase()] ?? '' : '')
+const nameOf = (code?: string | null) => (code ? COUNTRY_NAME[code.toLowerCase()] ?? code.toUpperCase() : '')
 
 function fmtDate(ts: number | null | undefined) {
   if (!ts) return '—'
@@ -36,7 +45,14 @@ function fmtTime(ts: string) {
   return d.toLocaleString('ru-RU', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
 }
 
-export function AccountManagementModal({ account, onClose }: { account: TgAccount | null; onClose: () => void }) {
+/**
+ * Тело карточки аккаунта: баннер, вкладки и их содержимое.
+ *
+ * Вынесено из модалки, чтобы одну и ту же карточку можно было показать двумя способами:
+ * боковой панелью (user-панель) и раскрытой строкой прямо под аккаунтом (админка).
+ * Логика загрузки и действий живёт здесь — оба способа получают её одинаковой.
+ */
+export function AccountCardBody({ account }: { account: TgAccount }) {
   const pushToast = useApp((s) => s.pushToast)
   const loadAccountBusy = useApp((s) => s.loadAccountBusy)
   const [tab, setTab] = useState<TabKey>('profile')
@@ -45,36 +61,41 @@ export function AccountManagementModal({ account, onClose }: { account: TgAccoun
   const [spamChecking, setSpamChecking] = useState(false)
   const [releasing, setReleasing] = useState(false)
 
-  const load = useCallback(async (opts?: { spam?: boolean }) => {
-    if (!account) return
+  const loadAccounts = useApp((s) => s.loadAccounts)
+
+  const load = useCallback(async (opts?: { spam?: boolean; force?: boolean }) => {
     setLoading(true)
     try {
       const s = await fetchAccountStats(account.id, opts)
       setStats(s)
+      // После ЖИВОЙ проверки перечитываем список аккаунтов: «Зона риска» в шапке берётся
+      // из него, и без этого карточка спорила сама с собой — вкладка «Прокси» показывала
+      // «Работает», а плашка сверху всё ещё «Прокси не отвечает» (замечание 12.08).
+      if (opts?.force || opts?.spam) void loadAccounts()
     } catch (e) {
       pushToast({ type: 'error', title: 'Не удалось получить данные аккаунта', desc: e instanceof Error ? e.message : undefined })
     } finally {
       setLoading(false)
     }
-  }, [account, pushToast])
+  }, [account, pushToast, loadAccounts])
 
   useEffect(() => {
-    if (!account) { setStats(null); setTab('profile'); return }
+    setStats(null)
+    setTab('profile')
     void load()
-  }, [account?.id])
+  }, [account.id])
 
   const runSpamCheck = async () => {
     setSpamChecking(true)
     try {
       await load({ spam: true })
-      pushToast({ type: 'info', title: 'Спамблок проверен через @SpamBot' })
+      pushToast({ type: 'success', title: 'Спамблок проверен через @SpamBot' })
     } finally {
       setSpamChecking(false)
     }
   }
 
   const runRelease = async () => {
-    if (!account) return
     setReleasing(true)
     try {
       const r = await releaseAccountLock(account.id)
@@ -89,18 +110,17 @@ export function AccountManagementModal({ account, onClose }: { account: TgAccoun
   }
 
   return (
-    <Modal
-      open={!!account}
-      onClose={onClose}
-      size="xl"
-      icon={<div className="grid h-10 w-10 place-items-center rounded-xl bg-iris-500/15 text-iris-300"><User size={20} /></div>}
-      title="Управление аккаунтом"
-      subtitle={account ? `${account.name} · @${stats?.profile.username ?? account.username}` : ''}
-      footer={<button onClick={onClose} className="btn-primary h-10">Закрыть</button>}
-    >
-      {account && (
         <div className="space-y-4">
-          <HeroBanner account={account} stats={stats} />
+          <HeroBanner
+            account={account}
+            stats={stats}
+            actions={{
+              loading, spamChecking, releasing,
+              onRecheck: () => void load({ force: true }),
+              onSpamCheck: () => void runSpamCheck(),
+              onRelease: () => void runRelease(),
+            }}
+          />
 
           <div className="flex gap-1 overflow-x-auto border-b border-line no-scrollbar">
             {TABS.map((t) => (
@@ -125,40 +145,69 @@ export function AccountManagementModal({ account, onClose }: { account: TgAccoun
           ) : (
             <div className="animate-fade-in">
               {tab === 'profile' && <ProfileTab account={account} stats={stats} />}
-              {tab === 'proxy' && <ProxyTab stats={stats} loading={loading} onRecheck={() => void load()} />}
-              {tab === 'status' && <StatusTab stats={stats} spamChecking={spamChecking} onSpamCheck={() => void runSpamCheck()} />}
-              {tab === 'dates' && <DatesTab stats={stats} />}
-              {tab === 'actions' && (
-                <ActionsTab
-                  stats={stats}
-                  loading={loading}
-                  spamChecking={spamChecking}
-                  releasing={releasing}
-                  onRecheck={() => void load()}
-                  onSpamCheck={() => void runSpamCheck()}
-                  onRelease={() => void runRelease()}
-                />
-              )}
-              {tab === 'health' && <HealthTab stats={stats} />}
+              {tab === 'work' && <WorkTab accountId={account.id} />}
+              {tab === 'history' && <HistoryTab accountId={account.id} />}
+              {tab === 'proxy' && <ProxyTab account={account} stats={stats} loading={loading} onRecheck={() => void load({ force: true })} />}
+              {tab === 'health' && <HealthTab stats={stats} accountId={account.id} />}
               {tab === 'channels' && <ChannelsTab accountId={account.id} />}
-              {tab === 'folders' && <FoldersTab accountId={account.id} />}
             </div>
           )}
         </div>
-      )}
+  )
+}
+
+/**
+ * Та же карточка боковой панелью — как её открывает user-панель.
+ * В админке карточка разворачивается прямо под строкой аккаунта, там вызывается
+ * AccountCardBody напрямую.
+ */
+export function AccountManagementModal({ account, onClose }: { account: TgAccount | null; onClose: () => void }) {
+  return (
+    <Modal
+      open={!!account}
+      onClose={onClose}
+      size="xl"
+      // Боковая панель, а не попап посреди экрана: не закрывает список
+      // и читается как «деталь выбранной строки».
+      side
+      icon={<div className="grid h-10 w-10 place-items-center rounded-xl bg-iris-500/15 text-iris-300"><User size={20} /></div>}
+      title="Управление аккаунтом"
+      subtitle={account ? `${account.name} · @${account.username}` : ''}
+      footer={<button onClick={onClose} className="btn-primary h-10">Закрыть</button>}
+    >
+      {account && <AccountCardBody account={account} />}
     </Modal>
   )
 }
 
 /* ── Hero ── */
-function HeroBanner({ account, stats }: { account: TgAccount; stats: AccountStats | null }) {
+export function HeroBanner({ account, stats, actions }: {
+  account: TgAccount; stats: AccountStats | null
+  // MR-129: действия и здоровье вынесены В шапку — раньше огромная шапка была
+  // нефункциональной (имя + гео), а проверки/статус/здоровье прятались по табам.
+  actions?: {
+    loading: boolean; spamChecking: boolean; releasing: boolean
+    onRecheck: () => void; onSpamCheck: () => void; onRelease: () => void
+  }
+}) {
   const geo = stats?.profile.geo ?? account.country.toUpperCase()
   const valid = stats?.status.valid
+  /** Проверку сорвал прокси — причина показывается вместо «Невалидный». */
+  const blockedBy = stats?.status.checkBlocked ?? null
   const spam = stats?.status.spamblock ?? 'unknown'
   const warmingDays = stats?.status.warmingDays
   const active = stats?.status.warmingActive
+  const busy = stats?.busyIn
+  // Пауза при переходе между модулями: она случайная у каждого перехода, и без строки
+  // в карточке «почему профиль стоит» читалось только по логу задачи — если знать, в
+  // какой именно задаче искать (просьба владельца 21.08).
+  const switchPause = stats?.switchPause
+  const health = stats?.health
+  const trust = stats?.trust
+  // MR-292: вид ограничения считает сервер (limitKind) — один расчёт на список и карточку.
+  const лимит = account.limit && account.limit.kind !== 'none' ? account.limit : null
   return (
-    <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-iris-600 to-iris-800 p-5 text-white">
+    <div className="relative overflow-hidden rounded-2xl border border-iris-500/20 bg-gradient-to-br from-iris-800/70 to-iris-950/80 p-5 text-white">
       <div className="flex items-start gap-4">
         <Avatar name={account.name} color={account.avatarColor} size={54} />
         <div className="min-w-0 flex-1">
@@ -166,32 +215,167 @@ function HeroBanner({ account, stats }: { account: TgAccount; stats: AccountStat
           <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-white/80">
             <span className="text-white/90">@{stats?.profile.username ?? account.username}</span>
             <span className="opacity-60">{stats?.profile.phone ?? account.phone}</span>
-            <span className="rounded-md bg-white/15 px-1.5 py-0.5 text-xs font-bold">{FLAGS[geo] ?? ''} {geo}</span>
+            <span className="rounded-md bg-white/15 px-1.5 py-0.5 text-xs font-bold">{flagOf(geo)} {nameOf(geo) || geo}</span>
           </div>
+          {/* Здоровье и trust — сверхважные критерии, теперь видны сразу в шапке. */}
+          {(health || trust) && (
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+              {health && <span className="inline-flex items-center gap-1 rounded-lg bg-white/12 px-2 py-1 font-semibold"><HeartPulse size={12} /> Здоровье {health.score}/100 · {health.label}</span>}
+              {trust && <span className="inline-flex items-center gap-1 rounded-lg bg-white/12 px-2 py-1 font-semibold"><BarChart3 size={12} /> Доверие {trust.score}/100</span>}
+            </div>
+          )}
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1.5">
-          <Pill tone={valid == null ? 'neutral' : valid ? 'ok' : 'bad'}>
-            {valid == null ? <ShieldQuestion size={12} /> : valid ? <ShieldCheck size={12} /> : <ShieldAlert size={12} />}
-            {valid == null ? 'Проверка…' : valid ? 'Валидный' : 'Невалидный'}
-          </Pill>
+          {/* Проверку мог сорвать ПРОКСИ (не назначен / не отвечает) — тогда про сессию
+              ничего не известно, и писать «Невалидный» нельзя: это оговор аккаунта.
+              Показываем настоящую причину. */}
+          {blockedBy ? (
+            <Pill tone="warn">
+              <ShieldAlert size={12} />
+              {blockedBy === 'no_proxy' ? 'Нет прокси' : 'Прокси не отвечает'}
+            </Pill>
+          ) : (
+            <Pill tone={valid == null ? 'neutral' : valid ? 'ok' : 'bad'}>
+              {valid == null ? <ShieldQuestion size={12} /> : valid ? <ShieldCheck size={12} /> : <ShieldAlert size={12} />}
+              {valid == null ? 'Проверка…' : valid ? 'Валидный' : 'Невалидный'}
+            </Pill>
+          )}
+          {/* MR-154: убрана «лишняя строка» «данные сохранённые · HH:MM» — дублировала поле
+              «Последняя проверка» ниже и засоряла шапку статусов. Время живой проверки —
+              там же, ниже, в блоке проверок. */}
           <Pill tone={spam === 'clean' ? 'ok' : spam === 'blocked' ? 'bad' : 'neutral'}>
             {spam === 'clean' ? 'Без спамблока' : spam === 'blocked' ? 'Спамблок' : 'Спамблок: —'}
           </Pill>
           {active && (
             <Pill tone="ok">
-              <Loader2 size={12} className="animate-spin" /> Активен{warmingDays != null ? ` (${warmingDays}д)` : ''}
+              {/* MR-129: это статус, а не загрузка — был вечно крутящийся спиннер. Ставим статичную точку. */}
+              <span className="h-1.5 w-1.5 rounded-full bg-current" /> Активен{warmingDays != null ? ` (${warmingDays}д)` : ''}
             </Pill>
           )}
         </div>
       </div>
+
+      {/* MR-131: «зона риска» с конкретикой прямо в шапке — последствие + срок,
+          отдельно про прокси и отдельно про статус/здоровье. */}
+      {account.risk && account.risk.level !== 'none' && account.risk.factors.length > 0 && (
+        <div className={cn(
+          'mt-4 space-y-1 rounded-xl border px-3 py-2.5 text-xs leading-relaxed',
+          account.risk.level === 'high' ? 'border-rose-300/40 bg-rose-500/20 text-rose-50' : 'border-amber-300/40 bg-amber-500/20 text-amber-50',
+        )}>
+          <div className="flex items-center gap-1.5 font-bold">
+            <ShieldAlert size={13} /> {account.risk.level === 'high' ? 'Зона риска' : 'Повышенный риск'}
+          </div>
+          {account.risk.factors.map((f, i) => <div key={i} className="opacity-90">• {f.text}</div>)}
+        </div>
+      )}
+
+      {switchPause && (
+        <div className="mt-4 flex items-start gap-2 rounded-xl border border-iris-300/30 bg-iris-500/15 px-3 py-2.5 text-xs leading-relaxed text-iris-50">
+          <Clock size={13} className="mt-0.5 shrink-0" />
+          <div>
+            <div className="font-bold">Перерыв между модулями</div>
+            <div className="opacity-90">{switchPause.text}</div>
+            <div className="opacity-70">
+              Человек не переключается с одного занятия на другое мгновенно: пауза случайная,
+              10–45 секунд. Пока она идёт, аккаунт не берут другие модули — свой продолжает работать.
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/*
+        MR-292: ЧТО именно с аккаунтом, а не просто «Спамблок».
+        Владелец 01.09: «нам нужно определять, что с аккаунтом, и давать чёткое понятие».
+        Виды различаются судьбой аккаунта: временный отпустит сам, вечный снимается только
+        апелляцией, бан платформы не снимается вовсе. Раньше все три выглядели одинаково,
+        и оператор ждал снятия у аккаунта, которого уже нет.
+      */}
+      {/*
+        MR-297: жалоба через @SpamBot — когда подали и чем пока кончилась.
+        Владелец 02.09 просил статус «подана, ждём»: без него непонятно, кого уже трогали,
+        и обращение уходит по второму разу вслепую, а частые обращения антиспам считает
+        поведением. Стоит НАД видом ограничения: это свежий факт про этот аккаунт.
+      */}
+      {account.appeal?.at && account.appeal.state !== 'cleared' && (
+        <div className="mt-4 flex items-start gap-2 rounded-xl border border-amber-300/40 bg-amber-500/15 px-3 py-2.5 text-xs leading-relaxed text-amber-50">
+          <Clock size={13} className="mt-0.5 shrink-0" />
+          <div>
+            <div className="font-bold">
+              {account.appeal.state === 'sent' ? 'Жалоба подана — ждём модерацию' : 'Диалог с @SpamBot не завершён'}
+            </div>
+            <div className="opacity-90">{fmtDate(account.appeal.at)}</div>
+            <div className="opacity-75">
+              {account.appeal.state === 'sent'
+                ? 'Срока рассмотрения Telegram не называет. Узнать решение можно только повторной проверкой — она идёт по графику; снимут ограничение, и аккаунт вернётся в строй сам.'
+                : 'Жалоба не подтверждена ботом. Стоит повторить: до подтверждения обращение до модераторов не дошло.'}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {лимит ? (
+        <div className={cn(
+          'mt-4 space-y-1 rounded-xl border px-3 py-2.5 text-xs leading-relaxed',
+          лимит.kind === 'temporary' ? 'border-amber-300/40 bg-amber-500/20 text-amber-50' : 'border-rose-300/40 bg-rose-500/20 text-rose-50',
+        )}>
+          <div className="flex items-center gap-1.5 font-bold">
+            <ShieldAlert size={13} /> {лимит.label}
+          </div>
+          {/* Срок показываем ТОЛЬКО когда его назвал сам Telegram: наши догадки сюда не доезжают. */}
+          {лимит.until ? (
+            <div className="inline-flex items-center gap-1.5 font-semibold opacity-90">
+              <Clock size={12} /> До {fmtDate(лимит.until)} — срок назвал сам Telegram
+            </div>
+          ) : лимит.kind === 'permanent' ? (
+            <div className="opacity-90">Срок Telegram не назвал — даты снятия нет.</div>
+          ) : null}
+          <div className="opacity-90">{лимит.what}</div>
+        </div>
+      ) : spam === 'blocked' ? (
+        /* Живая проверка нашла спамблок, а в списке он ещё не отражён — вид неизвестен. */
+        <div className="mt-4 space-y-1 rounded-xl border border-rose-300/40 bg-rose-500/20 px-3 py-2.5 text-xs leading-relaxed text-rose-50">
+          <div className="flex items-center gap-1.5 font-bold"><ShieldAlert size={13} /> Спамблок Telegram</div>
+          <div className="opacity-90">Telegram ограничил аккаунт спам-фильтром — часть действий (комментарии, ЛС новым собеседникам) для него недоступна.</div>
+          <div className="opacity-90">Как снять: кнопка «Снять блокировку» подаёт апелляцию через @SpamBot; либо подождать и нажать «Проверить спамблок». До снятия аккаунт в задачи лучше не брать.</div>
+        </div>
+      ) : null}
+
+      {/* MR-129: статус-кнопки (Обновить / Проверить спамблок / Снять блокировку) — в шапке. */}
+      {actions && (
+        <div className="mt-4 flex flex-wrap gap-2 border-t border-white/15 pt-3">
+          <HeroBtn onClick={actions.onRecheck} loading={actions.loading} icon={<RefreshCw size={14} />} label="Обновить" />
+          <HeroBtn onClick={actions.onSpamCheck} loading={actions.spamChecking} icon={<ShieldQuestion size={14} />} label="Проверить спамблок" />
+          {(busy || spam === 'blocked') && <HeroBtn onClick={actions.onRelease} loading={actions.releasing} icon={<Unlock size={14} />} label="Снять блокировку" tone="danger" />}
+        </div>
+      )}
     </div>
   )
 }
 
-function Pill({ children, tone }: { children: React.ReactNode; tone: 'ok' | 'bad' | 'neutral' }) {
+function HeroBtn({ onClick, loading, icon, label, tone }: {
+  onClick: () => void; loading?: boolean; icon: React.ReactNode; label: string; tone?: 'danger'
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={loading}
+      className={cn(
+        'inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-bold transition-colors disabled:opacity-50',
+        tone === 'danger' ? 'border-rose-200/50 bg-rose-500/20 text-rose-50 hover:bg-rose-500/30' : 'border-white/25 bg-white/12 text-white hover:bg-white/20',
+      )}
+    >
+      {loading ? <Loader2 size={14} className="animate-spin" /> : icon}
+      {label}
+    </button>
+  )
+}
+
+function Pill({ children, tone }: { children: React.ReactNode; tone: 'ok' | 'bad' | 'neutral' | 'warn' }) {
   const tones = {
     ok: 'bg-spark-500/25 text-spark-50 border-spark-300/40',
     bad: 'bg-rose-500/25 text-rose-50 border-rose-300/40',
+    // Проблема НЕ в аккаунте (прокси) — янтарный, чтобы не путать с «невалидным».
+    warn: 'bg-amber-500/30 text-amber-50 border-amber-300/50',
     neutral: 'bg-white/15 text-white/90 border-white/25',
   }
   return <span className={cn('inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-bold', tones[tone])}>{children}</span>
@@ -233,8 +417,9 @@ function SectionCard({ title, icon, children, action }: { title: string; icon?: 
 const dash = <span className="text-faint">—</span>
 
 /* ── Tabs ── */
-function ProfileTab({ account, stats }: { account: TgAccount; stats: AccountStats | null }) {
+export function ProfileTab({ account, stats }: { account: TgAccount; stats: AccountStats | null }) {
   const p = stats?.profile
+  const d = stats?.dates
   return (
     <div className="grid gap-3 md:grid-cols-2">
       <SectionCard title="Telegram-профиль" icon={<User size={15} className="text-iris-300" />}>
@@ -246,56 +431,105 @@ function ProfileTab({ account, stats }: { account: TgAccount; stats: AccountStat
         <Field label="Premium" value={p?.premium == null ? dash : (p.premium ? 'Да' : 'Нет')} />
       </SectionCard>
       <SectionCard title="Системная информация" icon={<Globe size={15} className="text-iris-300" />}>
-        <Field label="Гео" value={p?.geo ? `${FLAGS[p.geo] ?? ''} ${p.geo}` : dash} />
+        <Field label="Гео" value={p?.geo ? `${flagOf(p.geo)} ${nameOf(p.geo)}` : dash} />
         <Field label="Сессия сохранена" value={p?.saved ? 'Да' : 'Нет'} />
         <Field label="Роль" value={stats?.role ?? account.role ?? dash} />
-        <Field label="Проект" value={account.project ?? dash} />
+      </SectionCard>
+      {/* MR-129: «Даты» больше не отдельный таб — переехали в Профиль (там им и место). */}
+      <SectionCard title="Даты" icon={<Calendar size={15} className="text-iris-300" />}>
+        <Field label="Добавлен в систему" value={fmtDate(d?.addedAt)} />
+        <Field label="Последняя проверка" value={fmtDate(d?.lastCheckAt)} />
+        <Field label="Проверка спамблока" value={fmtDate(d?.spamblockAt)} />
+        <Field label="Проверка прокси" value={fmtDate(d?.proxyCheckAt)} />
       </SectionCard>
     </div>
   )
 }
 
-function ProxyTab({ stats, loading, onRecheck }: { stats: AccountStats | null; loading: boolean; onRecheck: () => void }) {
+export function ProxyTab({ account, stats, loading, onRecheck }: { account: TgAccount; stats: AccountStats | null; loading: boolean; onRecheck: () => void }) {
   const px = stats?.proxy
-  if (!px) return <div className="py-8 text-center text-sm text-muted">Нет данных</div>
-  if (!px.configured) {
-    return (
-      <SectionCard title="Прокси" icon={<Globe size={15} className="text-iris-300" />}>
-        <div className="py-6 text-center text-sm text-muted">Прямое подключение (прокси не настроен)</div>
-      </SectionCard>
-    )
-  }
+  const hasPx = !!account.proxyId // MR-129: нет прокси → «Добавить», есть → «Сменить»
+  const setAccountProxy = useApp((s) => s.setAccountProxy)
+  const pushToast = useApp((s) => s.pushToast)
+  const [changeOpen, setChangeOpen] = useState(false)
+  // Правка 14.08: показываем НАЗВАНИЕ прокси из каталога (модуль «Прокси»), а не только адрес.
+  const [proxyName, setProxyName] = useState<string | null>(null)
+  useEffect(() => {
+    if (!hasPx) { setProxyName(null); return }
+    // По ССЫЛКЕ, а не разбором строки подключения: раньше отсюда выковыривали host:port
+    // регуляркой из `socks5://логин:пароль@хост:порт` — то есть строка с паролем жила в
+    // браузере. Теперь у аккаунта есть только proxyId, и запись ищется по нему.
+    void fetchProxies().then((list) => {
+      setProxyName(list.find((p) => p.id === account.proxyId)?.label || null)
+    }).catch(() => setProxyName(null))
+  }, [account.proxyId, hasPx])
   return (
+    <>
     <SectionCard
       title="Прокси"
       icon={<Globe size={15} className="text-iris-300" />}
       action={
-        <button onClick={onRecheck} disabled={loading} className="btn-soft h-8 text-xs disabled:opacity-50">
-          {loading ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />} Проверить
-        </button>
+        <div className="flex items-center gap-2">
+          {/* MR-129: сменить прокси прямо из карточки — выбор из базы прокси или ввод нового. */}
+          <button onClick={() => setChangeOpen(true)} className="btn-soft h-8 text-xs">
+            <Server size={13} /> {hasPx ? 'Сменить прокси' : 'Добавить прокси'}
+          </button>
+          <button onClick={onRecheck} disabled={loading} className="btn-soft h-8 text-xs disabled:opacity-50">
+            {loading ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />} Проверить
+          </button>
+        </div>
       }
     >
-      <div className="mb-3 rounded-xl border border-line bg-elevated px-3 py-2 font-mono text-xs text-iris-300 break-all">{px.raw}</div>
-      <div className="mb-3">
-        {px.working == null ? (
-          <span className="inline-flex items-center gap-1.5 rounded-lg bg-slate-500/15 px-2.5 py-1 text-xs font-bold text-slate-300"><ShieldQuestion size={13} /> Не проверено</span>
-        ) : px.working ? (
-          <span className="inline-flex items-center gap-1.5 rounded-lg bg-spark-500/15 px-2.5 py-1 text-xs font-bold text-spark-300"><ShieldCheck size={13} /> Работает</span>
-        ) : (
-          <span className="inline-flex items-center gap-1.5 rounded-lg bg-rose-500/15 px-2.5 py-1 text-xs font-bold text-rose-300"><ShieldAlert size={13} /> Не отвечает</span>
-        )}
-        <span className="ml-2 text-xs text-muted">Проверено: {fmtDate(px.checkedAt)}</span>
-      </div>
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        <MiniStat label="Протокол" value={px.protocol ?? '—'} />
-        <MiniStat label="IP" value={px.ip ?? '—'} />
-        <MiniStat label="Порт" value={px.port != null ? String(px.port) : '—'} />
-        <MiniStat label="Логин" value={px.login ?? '—'} />
-      </div>
+      {!px?.configured ? (
+        // Прокси НЕ назначен. Раньше здесь было «Прямое подключение» — звучало как рабочий
+        // режим, хотя на деле аккаунт вообще не проверяется и идёт с общего IP сервера.
+        <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-4 text-center">
+          <div className="inline-flex items-center gap-1.5 text-sm font-bold text-amber-200"><ShieldAlert size={15} /> Нет прокси</div>
+          <div className="mt-1 text-xs text-amber-200/80">
+            Аккаунт не проверяется и не идёт в работу без прокси — назначьте его в менеджере аккаунтов.
+          </div>
+        </div>
+      ) : (
+        <>
+          <div className="mb-3 rounded-xl border border-line bg-elevated px-3 py-2">
+            {proxyName && <div className="mb-0.5 text-sm font-bold text-fg">{proxyName}</div>}
+            <div className="font-mono text-xs text-iris-300 break-all">{px.raw}</div>
+          </div>
+          <div className="mb-3">
+            {px.working == null ? (
+              <span className="inline-flex items-center gap-1.5 rounded-lg bg-slate-500/15 px-2.5 py-1 text-xs font-bold text-slate-300"><ShieldQuestion size={13} /> Не проверено</span>
+            ) : px.working ? (
+              <span className="inline-flex items-center gap-1.5 rounded-lg bg-spark-500/15 px-2.5 py-1 text-xs font-bold text-spark-300"><ShieldCheck size={13} /> Работает</span>
+            ) : (
+              <span className="inline-flex items-center gap-1.5 rounded-lg bg-rose-500/15 px-2.5 py-1 text-xs font-bold text-rose-300"><ShieldAlert size={13} /> Не отвечает · помечен нерабочим</span>
+            )}
+            <span className="ml-2 text-xs text-muted">Проверено: {fmtDate(px.checkedAt)}</span>
+          </div>
+          {/* Причина прямым текстом: почему аккаунт не удалось проверить. */}
+          {stats?.status.checkNote && (
+            <div className="mb-3 rounded-lg border border-amber-500/25 bg-amber-500/8 px-3 py-2 text-xs text-amber-200">
+              {stats.status.checkNote}
+            </div>
+          )}
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <MiniStat label="Протокол" value={px.protocol ?? '—'} />
+            <MiniStat label="IP" value={px.ip ?? '—'} />
+            <MiniStat label="Порт" value={px.port != null ? String(px.port) : '—'} />
+            <MiniStat label="Логин" value={px.login ?? '—'} />
+          </div>
+        </>
+      )}
     </SectionCard>
+    <ChangeProxyModal
+      acc={changeOpen ? account : null}
+      onClose={() => setChangeOpen(false)}
+      onSave={(id, p) => { void setAccountProxy(id, p).then(() => { pushToast({ type: 'success', title: 'Прокси обновлён', desc: 'Нажмите «Проверить», чтобы проверить новый прокси' }); setChangeOpen(false); onRecheck() }) }}
+    />
+    </>
   )
 }
 
+/* mini-stat cell */
 function MiniStat({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-xl border border-line bg-elevated p-2.5">
@@ -305,122 +539,91 @@ function MiniStat({ label, value }: { label: string; value: string }) {
   )
 }
 
-function StatusTab({ stats, spamChecking, onSpamCheck }: { stats: AccountStats | null; spamChecking: boolean; onSpamCheck: () => void }) {
-  const st = stats?.status
-  if (!st) return <div className="py-8 text-center text-sm text-muted">Нет данных</div>
-  return (
-    <div className="grid gap-3 sm:grid-cols-3">
-      <StatusCard
-        icon={st.valid ? <ShieldCheck size={22} /> : <ShieldAlert size={22} />}
-        tone={st.valid ? 'ok' : 'bad'}
-        title="Статус"
-        value={st.valid ? 'Валидный' : 'Невалидный'}
-        desc={st.sessionOk ? 'Сессия работает' : 'Сессия недоступна'}
-      />
-      <StatusCard
-        icon={st.spamblock === 'clean' ? <ShieldCheck size={22} /> : st.spamblock === 'blocked' ? <ShieldAlert size={22} /> : <ShieldQuestion size={22} />}
-        tone={st.spamblock === 'clean' ? 'ok' : st.spamblock === 'blocked' ? 'bad' : 'neutral'}
-        title="Спамблок"
-        value={st.spamblock === 'clean' ? 'Чисто' : st.spamblock === 'blocked' ? 'Ограничен' : 'Неизвестно'}
-        desc={st.spamblock === 'unknown' ? 'Не проверялся' : (st.spamblockText || '')}
-        footer={
-          <button onClick={onSpamCheck} disabled={spamChecking} className="btn-soft mt-2 h-7 w-full text-xs disabled:opacity-50">
-            {spamChecking ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />} Проверить @SpamBot
-          </button>
-        }
-      />
-      <StatusCard
-        icon={<Zap size={22} />}
-        tone={st.warmingActive ? 'ok' : 'neutral'}
-        title="Прогрев"
-        value={st.warmingActive ? 'Активен' : 'Неактивен'}
-        desc={`${st.warmingDays} дн. в системе`}
-        pulse={st.warmingActive}
-      />
-    </div>
-  )
+
+const DAILY_ACTION_LABELS: Record<string, string> = {
+  comments: 'Комментарии',
+  dm: 'ЛС незнакомым',
+  joins: 'Вступления',
+  reactions: 'Реакции',
 }
 
-function StatusCard({ icon, tone, title, value, desc, footer, pulse }: {
-  icon: React.ReactNode; tone: 'ok' | 'bad' | 'neutral'; title: string; value: string; desc?: string; footer?: React.ReactNode; pulse?: boolean
-}) {
-  const tones = {
-    ok: 'text-spark-400 bg-spark-500/12',
-    bad: 'text-rose-400 bg-rose-500/12',
-    neutral: 'text-slate-300 bg-slate-500/12',
-  }
+function DailyLimitsCard({ accountId }: { accountId: string }) {
+  const [daily, setDaily] = useState<AccountDaily | null>(null)
+  useEffect(() => {
+    let alive = true
+    void fetchAccountDaily(accountId).then((d) => { if (alive) setDaily(d) }).catch(() => {})
+    return () => { alive = false }
+  }, [accountId])
   return (
-    <div className="rounded-2xl border border-line bg-elevated/40 p-4 text-center">
-      <div className={cn('mx-auto grid h-12 w-12 place-items-center rounded-2xl', tones[tone], pulse && 'animate-pulse-ring')}>{icon}</div>
-      <div className="mt-2 text-[11px] font-bold uppercase tracking-wide text-muted">{title}</div>
-      <div className="text-lg font-bold text-fg">{value}</div>
-      {desc && <div className="mt-0.5 line-clamp-2 text-xs text-muted">{desc}</div>}
-      {footer}
-    </div>
-  )
-}
-
-function DatesTab({ stats }: { stats: AccountStats | null }) {
-  const d = stats?.dates
-  return (
-    <SectionCard title="Даты" icon={<Calendar size={15} className="text-iris-300" />}>
-      <Field label="Добавлен в систему" value={fmtDate(d?.addedAt)} />
-      <Field label="Последняя проверка" value={fmtDate(d?.lastCheckAt)} />
-      <Field label="Проверка прокси" value={fmtDate(d?.proxyCheckAt)} />
+    <SectionCard title="Суточные лимиты" icon={<BarChart3 size={15} className="text-spark-300" />}>
+      {!daily ? (
+        <div className="py-3 text-center text-sm text-muted">Загрузка…</div>
+      ) : (
+        <div className="space-y-2.5">
+          {daily.items.map((it) => {
+            const pct = it.cap ? Math.min(100, Math.round((it.used / it.cap) * 100)) : 0
+            const barColor = it.reached ? '#ef4444' : pct >= 75 ? '#f59e0b' : '#0ec464'
+            return (
+              <div key={it.action}>
+                <div className="mb-1 flex items-center justify-between text-xs">
+                  <span className="text-fg">{DAILY_ACTION_LABELS[it.action] ?? it.action}</span>
+                  <span className={cn('font-semibold tabular-nums', it.reached ? 'text-rose-300' : 'text-muted')}>
+                    {it.used} / {it.cap}{it.reached ? ' · лимит' : ''}
+                  </span>
+                </div>
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-line">
+                  <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, background: barColor }} />
+                </div>
+              </div>
+            )
+          })}
+          <div className="pt-1 text-[11px] text-faint">Сбрасывается в полночь. При достижении потолка модули пропускают аккаунт.</div>
+        </div>
+      )}
     </SectionCard>
   )
 }
 
-function ActionsTab({ stats, loading, spamChecking, releasing, onRecheck, onSpamCheck, onRelease }: {
-  stats: AccountStats | null; loading: boolean; spamChecking: boolean; releasing: boolean
-  onRecheck: () => void; onSpamCheck: () => void; onRelease: () => void
-}) {
-  const busy = stats?.busyIn
+function TrustCard({ trust }: { trust: AccountStats['trust'] }) {
+  const tone = trust.band === 'high' ? { c: '#0ec464', chip: 'text-spark-300 bg-spark-500/15' }
+    : trust.band === 'mid' ? { c: '#f59e0b', chip: 'text-amber-300 bg-amber-500/15' }
+    : { c: '#ef4444', chip: 'text-rose-300 bg-rose-500/15' }
+  const PARTS: { key: keyof AccountStats['trust']['parts']; label: string; w: string }[] = [
+    { key: 'flood', label: 'FloodWait 24ч', w: '40%' },
+    { key: 'bans', label: 'История блоков', w: '25%' },
+    { key: 'actions', label: 'Чистые действия', w: '15%' },
+    { key: 'age', label: 'Возраст / AIR', w: '20%' },
+  ]
   return (
-    <div className="space-y-3">
-      {busy && (
-        <div className="flex items-center gap-2 rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-sm text-amber-200">
-          <Loader2 size={15} className="animate-spin" />
-          Аккаунт занят в модуле «{busy.moduleLabel}». Сетевые проверки выполнятся после освобождения.
+    <SectionCard title="Оценка доверия" icon={<BarChart3 size={15} style={{ color: tone.c }} />}>
+      <div className="flex items-center gap-4 py-1">
+        <Gauge value={trust.score} color={tone.c} />
+        <div className="min-w-0">
+          <span className={cn('rounded-md px-2 py-0.5 text-xs font-bold', tone.chip)}>{trust.label}</span>
+          <div className="mt-1 text-xs text-muted">{trust.hint}</div>
         </div>
-      )}
-      <SectionCard title="Проверки" icon={<Zap size={15} className="text-iris-300" />}>
-        <div className="grid gap-2 sm:grid-cols-2">
-          <ActionBtn onClick={onRecheck} loading={loading} icon={<RefreshCw size={15} />} label="Перепроверить сессию и прокси" />
-          <ActionBtn onClick={onSpamCheck} loading={spamChecking} icon={<ShieldQuestion size={15} />} label="Проверить спамблок (@SpamBot)" />
-        </div>
-      </SectionCard>
-      <SectionCard title="Блокировка" icon={<Unlock size={15} className="text-iris-300" />}>
-        <p className="mb-2 text-xs text-muted">
-          {busy ? 'Снимите блокировку, если задача зависла и аккаунт не освобождается.' : 'Активных блокировок нет.'}
-        </p>
-        <ActionBtn onClick={onRelease} loading={releasing} disabled={!busy} tone="danger" icon={<Unlock size={15} />} label="Снять блокировку аккаунта" />
-      </SectionCard>
-    </div>
+      </div>
+      <div className="mt-2 space-y-1.5">
+        {PARTS.map((p) => (
+          <div key={p.key}>
+            <div className="mb-0.5 flex items-center justify-between text-[11px]">
+              <span className="text-fg">{p.label} <span className="text-faint">· вес {p.w}</span></span>
+              <span className="font-semibold tabular-nums text-muted">{trust.parts[p.key]}/100</span>
+            </div>
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-line">
+              <div className="h-full rounded-full" style={{ width: `${trust.parts[p.key]}%`, background: tone.c }} />
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="pt-2 text-[11px] text-faint">Пороги: &lt;40 — авто-стоп → прогрев · 40–70 — консервативный режим · &gt;70 — в пул.</div>
+    </SectionCard>
   )
 }
 
-function ActionBtn({ onClick, loading, disabled, icon, label, tone }: {
-  onClick: () => void; loading?: boolean; disabled?: boolean; icon: React.ReactNode; label: string; tone?: 'danger'
-}) {
-  return (
-    <button
-      onClick={onClick}
-      disabled={loading || disabled}
-      className={cn(
-        'flex items-center gap-2 rounded-xl border px-3 py-2.5 text-left text-sm font-semibold transition-colors disabled:opacity-40',
-        tone === 'danger' ? 'border-rose-500/30 text-rose-300 hover:bg-rose-500/10' : 'border-line text-fg hover:bg-elevated',
-      )}
-    >
-      {loading ? <Loader2 size={15} className="animate-spin" /> : icon}
-      {label}
-    </button>
-  )
-}
-
-function HealthTab({ stats }: { stats: AccountStats | null }) {
+export function HealthTab({ stats, accountId }: { stats: AccountStats | null; accountId: string }) {
   if (!stats) return <div className="py-8 text-center text-sm text-muted">Нет данных</div>
-  const { health, longevity, activity } = stats
+  const { health, longevity, activity, trust } = stats
   const riskLabel = longevity.risk === 'low' ? 'Низкий риск' : longevity.risk === 'medium' ? 'Средний риск' : 'Высокий риск'
   const riskTone = longevity.risk === 'low' ? 'text-spark-300 bg-spark-500/15' : longevity.risk === 'medium' ? 'text-amber-300 bg-amber-500/15' : 'text-rose-300 bg-rose-500/15'
   const healthColor = health.score >= 80 ? '#0ec464' : health.score >= 55 ? '#f59e0b' : '#ef4444'
@@ -451,6 +654,10 @@ function HealthTab({ stats }: { stats: AccountStats | null }) {
           </div>
         </SectionCard>
       </div>
+
+      <TrustCard trust={trust} />
+
+      <DailyLimitsCard accountId={accountId} />
 
       <SectionCard title="События здоровья" icon={<AlertCircle size={15} className="text-amber-300" />}>
         {health.events.length === 0 ? (
@@ -506,11 +713,11 @@ function Gauge({ value, color }: { value: number; color: string }) {
   )
 }
 
-function ChannelsTab({ accountId }: { accountId: string }) {
+export function ChannelsTab({ accountId }: { accountId: string }) {
   const [state, setState] = useState<{ loading: boolean; busy: boolean; busyLabel?: string; error?: string; items: AccountChannel[] }>({ loading: true, busy: false, items: [] })
   useEffect(() => {
     let alive = true
-    setState((s) => ({ ...s, loading: true }))
+    setState({ loading: true, busy: false, items: [] }) // §3: не показываем каналы/папки прежнего аккаунта, пока грузим нового
     void fetchAccountChannels(accountId).then((r) => {
       if (!alive) return
       setState({ loading: false, busy: r.busy, busyLabel: r.busyIn?.moduleLabel, error: r.error, items: r.channels })
@@ -518,56 +725,132 @@ function ChannelsTab({ accountId }: { accountId: string }) {
     return () => { alive = false }
   }, [accountId])
 
+  const pushToast = useApp((s) => s.pushToast)
+  const [q, setQ] = useState('')
+  const [kind, setKind] = useState(0) // 0 — все, 1 — каналы, 2 — группы
+  const [leavingId, setLeavingId] = useState<string | null>(null)
+  const [msgView, setMsgView] = useState<AccountChannel | null>(null) // MR-164: просмотр сообщений канала/группы
+
+  const leave = async (c: AccountChannel) => {
+    if (!(await confirmDialog({
+      title: c.kind === 'channel' ? 'Выйти из канала?' : 'Выйти из группы?',
+      message: `Аккаунт покинет «${c.title}». Действие можно отменить только повторным вступлением.`,
+      confirmLabel: 'Выйти', tone: 'danger',
+    }))) return
+    setLeavingId(c.id)
+    try {
+      const r = await leaveAccountChannel(accountId, c.id)
+      if (!r.ok) { pushToast({ type: 'error', title: 'Не удалось выйти', desc: r.error || '' }); return }
+      setState((s) => ({ ...s, items: s.items.filter((x) => x.id !== c.id) }))
+      pushToast({ type: 'success', title: c.kind === 'channel' ? 'Вышли из канала' : 'Вышли из группы', desc: c.title })
+    } catch (e) {
+      pushToast({ type: 'error', title: 'Ошибка', desc: e instanceof Error ? e.message : '' })
+    } finally { setLeavingId(null) }
+  }
+
   if (state.loading) return <LiveLoading label="Загрузка каналов из Telegram…" />
   if (state.busy) return <BusyNotice label={state.busyLabel} />
   if (state.error) return <ErrorNotice error={state.error} />
   if (!state.items.length) return <div className="py-10 text-center text-sm text-muted">Каналов и групп не найдено</div>
+
+  const channelsN = state.items.filter((c) => c.kind === 'channel').length
+  const groupsN = state.items.length - channelsN
+  const shown = state.items
+    .filter((c) => kind === 0 || (kind === 1 ? c.kind === 'channel' : c.kind === 'group'))
+    .filter((c) => !q.trim() || `${c.title} ${c.username}`.toLowerCase().includes(q.trim().toLowerCase()))
+
   return (
-    <div className="max-h-96 space-y-1.5 overflow-y-auto">
-      {state.items.map((c) => (
-        <div key={c.id} className="flex items-center gap-3 rounded-xl border border-line bg-elevated/40 px-3 py-2.5">
+    <div className="space-y-2">
+      <Segmented options={[`Все · ${state.items.length}`, `Каналы · ${channelsN}`, `Группы · ${groupsN}`]} value={kind} onChange={setKind} size="sm" />
+      <input
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+        className="input h-9 text-sm"
+        placeholder={`Поиск среди ${state.items.length} каналов/групп…`}
+      />
+      <div className="max-h-96 space-y-1.5 overflow-y-auto">
+      {shown.length === 0 && <div className="py-6 text-center text-sm text-muted">Ничего не найдено</div>}
+      {shown.map((c) => (
+        <div key={c.id} className="group/ch flex items-center gap-3 rounded-xl border border-line bg-elevated/40 px-3 py-2.5">
           <span className={cn('grid h-8 w-8 shrink-0 place-items-center rounded-lg text-xs font-bold', c.kind === 'channel' ? 'bg-iris-500/15 text-iris-300' : 'bg-spark-500/15 text-spark-300')}>
             {c.kind === 'channel' ? <Hash size={15} /> : <User size={15} />}
           </span>
-          <div className="min-w-0 flex-1">
-            <div className="truncate text-sm font-semibold text-fg">{c.title}</div>
-            <div className="truncate text-xs text-muted">{c.username ? `@${c.username}` : c.kind === 'channel' ? 'Канал' : 'Группа'}{c.members ? ` · ${c.members.toLocaleString('ru-RU')} уч.` : ''}</div>
-          </div>
+          {/* MR-164: клик по названию открывает ПЕРЕПИСКУ канала/группы (не Telegram) —
+              последние сообщения в модалке, как диалог. «Открыть в Telegram» ушло в кнопку-копирование. */}
+          <button onClick={() => setMsgView(c)} className="min-w-0 flex-1 text-left" title="Открыть переписку">
+            <div className="flex items-center gap-1.5 truncate text-sm font-semibold text-fg transition-colors group-hover/ch:text-iris-300">{c.title}<MessageSquare size={12} className="shrink-0 opacity-0 transition-opacity group-hover/ch:opacity-100" /></div>
+            <div className="truncate text-xs text-muted">{c.username ? `@${c.username}` : `${c.kind === 'channel' ? 'Канал' : 'Группа'} · приватный`}{c.members ? ` · ${c.members.toLocaleString('ru-RU')} уч.` : ''}</div>
+          </button>
           {c.unread > 0 && <span className="rounded-full bg-rose-500/15 px-2 py-0.5 text-[11px] font-bold text-rose-300">{c.unread}</span>}
+          {/* MR-129: «взять отсюда» — копируем ссылку/@username, чтобы вставить канал как цель. */}
+          {c.username && (
+            <button
+              type="button"
+              onClick={() => { void navigator.clipboard?.writeText(`https://t.me/${c.username}`); pushToast({ type: 'success', title: 'Скопировано', desc: `@${c.username}` }) }}
+              className="btn-icon h-8 w-8 shrink-0 text-muted hover:text-spark-300"
+              title="Скопировать ссылку канала (вставить как цель)"
+            >
+              <Copy size={14} />
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => void leave(c)}
+            disabled={leavingId === c.id}
+            className="btn-icon h-8 w-8 shrink-0 text-rose-300 hover:bg-rose-500/10 disabled:opacity-50"
+            title="Выйти из канала/группы"
+          >
+            {leavingId === c.id ? <Loader2 size={14} className="animate-spin" /> : <LogOut size={14} />}
+          </button>
         </div>
       ))}
+      </div>
+      {msgView && <ChannelMessagesModal accountId={accountId} channel={msgView} onClose={() => setMsgView(null)} />}
     </div>
   )
 }
 
-function FoldersTab({ accountId }: { accountId: string }) {
-  const [state, setState] = useState<{ loading: boolean; busy: boolean; busyLabel?: string; error?: string; items: AccountFolder[] }>({ loading: true, busy: false, items: [] })
+/** MR-164: модалка с последними сообщениями канала/группы (живой Telegram-запрос). */
+function ChannelMessagesModal({ accountId, channel, onClose }: { accountId: string; channel: AccountChannel; onClose: () => void }) {
+  const [st, setSt] = useState<{ loading: boolean; error?: string; busy?: boolean; msgs: ChannelMessage[] }>({ loading: true, msgs: [] })
   useEffect(() => {
     let alive = true
-    setState((s) => ({ ...s, loading: true }))
-    void fetchAccountFolders(accountId).then((r) => {
+    setSt({ loading: true, msgs: [] })
+    void fetchAccountChannelMessages(accountId, channel.username || channel.id).then((r) => {
       if (!alive) return
-      setState({ loading: false, busy: r.busy, busyLabel: r.busyIn?.moduleLabel, error: r.error, items: r.folders })
-    }).catch((e) => alive && setState({ loading: false, busy: false, error: e instanceof Error ? e.message : 'error', items: [] }))
+      setSt({ loading: false, busy: r.busy, error: r.error, msgs: r.messages || [] })
+    }).catch((e) => alive && setSt({ loading: false, error: e instanceof Error ? e.message : 'error', msgs: [] }))
     return () => { alive = false }
-  }, [accountId])
+  }, [accountId, channel])
 
-  if (state.loading) return <LiveLoading label="Загрузка папок из Telegram…" />
-  if (state.busy) return <BusyNotice label={state.busyLabel} />
-  if (state.error) return <ErrorNotice error={state.error} />
-  if (!state.items.length) return <div className="py-10 text-center text-sm text-muted">Папок нет</div>
+  const errText = st.error === 'no_session' ? 'Нет сессии аккаунта.'
+    : st.error === 'not_found' ? 'Канал/группа не найдены у этого аккаунта.'
+    : st.error ? `Не удалось загрузить (${st.error}). Возможно, мёртвый прокси.` : ''
+
   return (
-    <div className="grid gap-2 sm:grid-cols-2">
-      {state.items.map((f, i) => (
-        <div key={f.id ?? i} className="flex items-center gap-3 rounded-xl border border-line bg-elevated/40 px-3 py-2.5">
-          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-iris-500/15 text-iris-300"><FolderClosed size={15} /></span>
-          <div className="min-w-0 flex-1">
-            <div className="truncate text-sm font-semibold text-fg">{f.title}</div>
-            <div className="text-xs text-muted">{f.included} чатов{f.pinned ? ` · ${f.pinned} закреп.` : ''}</div>
-          </div>
+    <Modal open onClose={onClose} title={channel.title} subtitle={channel.username ? `@${channel.username} · последние сообщения` : 'последние сообщения'} icon={channel.kind === 'channel' ? <Hash size={20} /> : <User size={20} />} size="md">
+      {st.loading ? (
+        <LiveLoading label="Загрузка сообщений из Telegram…" />
+      ) : st.busy ? (
+        <div className="py-10 text-center text-sm text-amber-300">Аккаунт занят — сообщения недоступны.</div>
+      ) : errText ? (
+        <div className="py-10 text-center text-sm text-rose-300">{errText}</div>
+      ) : !st.msgs.length ? (
+        <div className="py-10 text-center text-sm text-muted">Сообщений нет.</div>
+      ) : (
+        <div className="max-h-[60vh] space-y-2 overflow-y-auto pr-1">
+          {st.msgs.map((m) => (
+            <div key={m.id} className={cn('rounded-xl border px-3 py-2', m.out ? 'ml-8 border-spark-500/25 bg-spark-500/[.06]' : 'mr-8 border-line bg-elevated/50')}>
+              <div className="mb-0.5 flex items-center justify-between gap-2 text-[10px] text-muted">
+                <span className="truncate">{m.sender || (m.out ? 'Вы' : channel.title)}</span>
+                <span className="shrink-0 tabular-nums">{new Date(m.date).toLocaleString('ru-RU', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
+              </div>
+              <div className="whitespace-pre-wrap break-words text-sm text-fg">{m.text || (m.hasMedia ? '[медиа]' : '')}</div>
+            </div>
+          ))}
         </div>
-      ))}
-    </div>
+      )}
+    </Modal>
   )
 }
 

@@ -5,4 +5,38 @@ dist-ssr
 .DS_Store
 *.tsbuildinfo
 .env
+# Бэкапы .env содержат те же секреты, что и сам .env, — в репозиторий им нельзя.
+.env.*
+!.env.example
 server/data/
+/AI-Incubator-report-2026-07-26.docx
+backups/
+
+# Одноразовые debug/скрин-скрипты (Claude), не коммитим
+scripts/_*.mjs
+
+# Локальные настройки Claude Code и утилиты с сервисными ключами (см. шапку файла)
+.claude/settings.local.json
+scripts/set-supabase-pass.mjs
+
+# Локальный выбор API-сервера (боевой/локальный). У каждого свой — в репозиторий
+# не коммитим: случайный "useLiveApi": true увёл бы чужой дев на боевой сервер.
+# Образец — api.config.example.json, без файла всё работает на локальном бэкенде.
+api.config.json
+
+# Serena (навигация по коду). Коммитим project.yml и memories/ — они общие для
+# команды. Кеш и project.local.yml Serena исключает сама (.serena/.gitignore),
+# логи прогонов — здесь: они у каждого свои и растут.
+.serena/logs/
+
+# codebase-memory-mcp (граф кода) — каталог целиком не коммитим.
+# Артефакт graph.db.zst соблазнительно закоммитить ради быстрого старта у
+# команды, но у индекса включён auto_watch: он перестраивается на любую правку
+# файла. Закоммиченный артефакт означал бы вечно грязное дерево — а npm run sync
+# на грязном дереве останавливается — то есть первый шаг любой задачи был бы заблокирован.
+# Индекс собирается локально примерно за минуту: npx codebase-memory-mcp cli
+# index_repository --repo-path . --mode full
+.codebase-memory/
+
+# Состояние привратника регламента: у каждого своё, к коду отношения не имеет.
+.claude/.workflow-state.json

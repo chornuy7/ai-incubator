@@ -31,7 +31,7 @@ export function Toasts() {
           <div className="mt-0.5 shrink-0">{ICONS[t.type]}</div>
           <div className="min-w-0 flex-1">
             <div className="text-sm font-bold text-fg">{t.title}</div>
-            {t.desc && <div className="mt-0.5 text-xs text-muted">{t.desc}</div>}
+            {t.desc && <div className="mt-0.5 whitespace-pre-line break-words text-xs text-muted">{t.desc}</div>}
           </div>
           <button onClick={() => dismiss(t.id)} className="shrink-0 text-faint transition-colors hover:text-fg">
             <X size={15} />

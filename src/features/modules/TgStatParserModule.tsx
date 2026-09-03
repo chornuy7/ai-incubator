@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  UploadCloud, ShieldCheck, KeyRound, RefreshCw, Plus, Search, Download, Trash2,
-  ExternalLink, StopCircle, CheckCircle2, XCircle, Clock, Loader2, Database, Cookie, AlertTriangle,
+  UploadCloud, ShieldCheck, KeyRound, RefreshCw, Plus, Search, Download, Trash2, Pencil,
+  ExternalLink, StopCircle, CheckCircle2, XCircle, Clock, Loader2, Database, Cookie, AlertTriangle, FileSpreadsheet,
 } from 'lucide-react'
 import { useApp } from '@/mocks/store'
 import { Select, Segmented, Badge, EmptyState } from '@/shared/ui'
@@ -9,7 +9,7 @@ import { cn } from '@/shared/lib/utils'
 import { TgStatSearchPanel } from './TgStatSearchPanel'
 import {
   fetchTgstatOptions, fetchTgstatSession, uploadTgstatSession, verifyTgstatSession, clearTgstatSession,
-  fetchTgstatImports, createTgstatImport, fetchTgstatChats, cancelTgstatImport, deleteTgstatImport, tgstatExportUrl,
+  fetchTgstatImports, createTgstatImport, fetchTgstatChats, cancelTgstatImport, deleteTgstatImport, renameTgstatImport, tgstatExportUrl, tgstatExportXlsxUrl,
   type TgstatOptions, type TgstatSession, type TgstatImport, type TgstatChat, type TgstatImportStatus,
 } from '@/api/tgstatApi'
 
@@ -43,7 +43,7 @@ function parseSessionJson(text: string): { cookies: unknown[] } {
     if (o.data && typeof o.data === 'object' && Array.isArray((o.data as Record<string, unknown>).cookies)) return { cookies: (o.data as Record<string, unknown>).cookies as unknown[] }
     if (Array.isArray(o.cookies)) return { cookies: o.cookies }
   }
-  throw new Error('В файле нет cookies. Экспортируйте их Cookie-Editor на uk.tgstat.com.')
+  throw new Error('В файле нет cookies. Экспортируйте их Cookie-Editor на сайте каталога (uk.tgstat.com).')
 }
 
 /** Амбер-карточка (визуально отделяет блок TGStat). */
@@ -81,6 +81,10 @@ export function TgStatParserModule() {
   const ms = typeof minSubs === 'number' ? minSubs : 0
 
   const [openImport, setOpenImport] = useState<TgstatImport | null>(null)
+  // Своё имя импорта (26.08) — как у «Последних запросов» прямого парсера: категория
+  // «Криптовалюта» через месяц не отличает три выгрузки друг от друга.
+  const [renaming, setRenaming] = useState(0)
+  const [renameDraft, setRenameDraft] = useState('')
   const [chats, setChats] = useState<TgstatChat[]>([])
   const [chatsLoading, setChatsLoading] = useState(false)
   const [pasteOpen, setPasteOpen] = useState(false)
@@ -158,14 +162,14 @@ export function TgStatParserModule() {
   }
 
   const handleClear = async () => {
-    try { setSession(await clearTgstatSession()); pushToast({ type: 'info', title: 'Сессия TGStat удалена' }) }
+    try { setSession(await clearTgstatSession()); pushToast({ type: 'info', title: 'Сессия каталога удалена' }) }
     catch { pushToast({ type: 'error', title: 'Не удалось удалить' }) }
   }
 
   const handleCreate = async () => {
     if (!category) return pushToast({ type: 'error', title: 'Выберите категорию' })
     if (mp > 1 && !session?.telegram_logged_in) {
-      pushToast({ type: 'error', title: `Для >${itemsPerStep} каналов нужен вход в TGStat через Telegram (cookies с tgstat_sirk)` })
+      pushToast({ type: 'error', title: `Для >${itemsPerStep} каналов нужен вход в каталог через Telegram (cookies с tgstat_sirk)` })
       return
     }
     setCreating(true)
@@ -181,6 +185,16 @@ export function TgStatParserModule() {
     try { setChats(await fetchTgstatChats(imp.id)) } catch { pushToast({ type: 'error', title: 'Не удалось загрузить результаты' }) } finally { setChatsLoading(false) }
   }
   const handleCancel = async (id: number) => { try { const u = await cancelTgstatImport(id); setImports((p) => p.map((i) => (i.id === id ? u : i))); pushToast({ type: 'info', title: 'Импорт отменён' }) } catch { pushToast({ type: 'error', title: 'Не удалось отменить' }) } }
+  const saveRename = async (imp: TgstatImport) => {
+    const title = renameDraft.trim()
+    setRenaming(0)
+    if (title === (imp.title || '')) return
+    try {
+      const next = await renameTgstatImport(imp.id, title)
+      setImports((p) => p.map((i) => (i.id === imp.id ? next : i)))
+    } catch { pushToast({ type: 'error', title: 'Не удалось переименовать' }) }
+  }
+
   const handleDelete = async (id: number) => { try { await deleteTgstatImport(id); setImports((p) => p.filter((i) => i.id !== id)); if (openImport?.id === id) setOpenImport(null); pushToast({ type: 'success', title: 'Импорт удалён' }) } catch { pushToast({ type: 'error', title: 'Не удалось удалить' }) } }
 
   return (
@@ -189,8 +203,8 @@ export function TgStatParserModule() {
       <div className="flex items-center gap-3 rounded-2xl border border-amber-500/40 bg-amber-500/8 p-4">
         <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-amber-500/15 text-amber-300"><Cookie size={20} /></span>
         <div>
-          <div className="font-display font-bold text-fg">Парсер каналов TGStat</div>
-          <div className="text-xs text-muted">Массовый парсинг каталога TGStat по категориям и регионам через cookies-сессию. Не требует Telegram-аккаунтов панели.</div>
+          <div className="font-display font-bold text-fg">Парсер по каталогу</div>
+          <div className="text-xs text-muted">Массовый парсинг по категориям и регионам через cookies-сессию. Не требует Telegram-аккаунтов панели.</div>
         </div>
         <div className="ml-auto">
           {sessionReady ? <Badge tone="spark"><CheckCircle2 size={12} /> Подключён</Badge> : <Badge tone="amber"><AlertTriangle size={12} /> Не подключён</Badge>}
@@ -203,11 +217,13 @@ export function TgStatParserModule() {
       <Segmented options={['Каталог по категориям', 'Расширенный поиск (фильтры)']} value={tgMode} onChange={setTgMode} />
 
       {/* Инструкция + загрузка cookies */}
-      <AmberCard icon={<Cookie size={18} />} title="Этап 1 — подключить TGStat" badge={sessionReady ? 'готово' : 'обязательно'}>
+      <AmberCard icon={<Cookie size={18} />} title="Этап 1 — подключить каталог" badge={sessionReady ? 'готово' : 'обязательно'}>
         <ol className="mb-4 list-decimal space-y-1.5 pl-5 text-sm text-muted">
-          <li>В Chrome откройте <a href="https://uk.tgstat.com/login" target="_blank" rel="noreferrer" className="text-amber-300 hover:underline">uk.tgstat.com</a> и войдите через Telegram (@tg_analytics_bot → START).</li>
+          {/* §6 (MR-40): наружу каталог нейтрален, но сам источник cookies — внешний сайт,
+              куда пользователь физически заходит; ссылку оставляем, иначе брать cookies негде. */}
+          <li>В Chrome откройте <a href="https://uk.tgstat.com/login" target="_blank" rel="noreferrer" className="text-amber-300 hover:underline">сайт каталога</a> и войдите через Telegram (@tg_analytics_bot → START).</li>
           <li>Установите расширение <a href={COOKIE_EDITOR_URL} target="_blank" rel="noreferrer" className="text-amber-300 hover:underline">Cookie-Editor</a>.</li>
-          <li>На странице TGStat: Cookie-Editor → <b className="text-fg">Export</b> → формат <b className="text-fg">JSON</b> → сохраните файл.</li>
+          <li>На открывшейся странице: Cookie-Editor → <b className="text-fg">Export</b> → формат <b className="text-fg">JSON</b> → сохраните файл.</li>
           <li>Загрузите этот JSON кнопкой ниже.</li>
         </ol>
         <div className="grid gap-2 sm:grid-cols-2">
@@ -236,7 +252,7 @@ export function TgStatParserModule() {
       </AmberCard>
 
       {/* Статус сессии */}
-      <AmberCard icon={<ShieldCheck size={18} />} title="Статус подключения TGStat"
+      <AmberCard icon={<ShieldCheck size={18} />} title="Статус подключения каталога"
         right={<button onClick={loadSession} className="btn-icon h-8 w-8"><RefreshCw size={14} /></button>}>
         {session ? (
           <div className="space-y-3">
@@ -246,7 +262,7 @@ export function TgStatParserModule() {
               </Badge>
               {session.has_session && (
                 <Badge tone={session.telegram_logged_in ? 'spark' : 'amber'}>
-                  {session.telegram_logged_in ? 'Telegram на TGStat ✓' : 'Нет входа — лимит ~100'}
+                  {session.telegram_logged_in ? 'Telegram в каталоге ✓' : 'Нет входа — лимит ~100'}
                 </Badge>
               )}
               {session.cookie_count > 0 && <Badge tone="muted">{session.cookie_count} cookies</Badge>}
@@ -289,7 +305,7 @@ export function TgStatParserModule() {
             <label className="label">Сколько страниц парсить (≈{itemsPerStep}/шаг)</label>
             <input type="number" min={1} max={100} value={maxPages} onChange={(e) => setMaxPages(e.target.value === "" ? "" : Math.max(1, Math.min(100, Number(e.target.value))))} className="input h-10" />
             {mp > 1 && !session?.telegram_logged_in && (
-              <p className="mt-1 text-xs text-amber-300">Для &gt;1 страницы нужен вход в TGStat через Telegram (cookies с tgstat_sirk).</p>
+              <p className="mt-1 text-xs text-amber-300">Для &gt;1 страницы нужен вход в каталог через Telegram (cookies с tgstat_sirk).</p>
             )}
           </div>
           <div>
@@ -306,19 +322,19 @@ export function TgStatParserModule() {
                 disabled ? 'cursor-not-allowed border border-line bg-elevated text-muted' : 'text-[#1a1200] hover:opacity-90',
               )}
               style={disabled ? undefined : { background: 'linear-gradient(90deg, #f59e0b, #fbbf24)' }}>
-              {creating ? <Loader2 size={17} className="animate-spin" /> : <Plus size={17} />} Запустить импорт
+              {creating ? <Loader2 size={17} className="animate-spin" /> : <Plus size={17} />} Начать импорт
             </button>
           )
         })()}
-        {!sessionReady && <p className="mt-2 text-center text-xs text-amber-300">Сначала подключите и проверьте сессию TGStat (этап 1) — кнопка станет активной.</p>}
-        {sessionReady && <p className="mt-2 text-center text-xs text-muted">После запуска результаты появятся ниже в блоке «История импортов» (🔍 — открыть, ⭳ — экспорт CSV).</p>}
+        {!sessionReady && <p className="mt-2 text-center text-xs text-amber-300">Сначала подключите и проверьте сессию каталога (этап 1) — кнопка станет активной.</p>}
+        {sessionReady && <p className="mt-2 text-center text-xs text-muted">После запуска результаты появятся ниже в блоке «История импортов» (🔍 — открыть, ⭳ — Excel или CSV).</p>}
       </AmberCard>
 
       {/* История импортов */}
       <AmberCard icon={<Database size={18} />} title={`История импортов (${imports.length})`}
         right={<button onClick={loadImports} className="btn-icon h-8 w-8"><RefreshCw size={14} /></button>}>
         {imports.length === 0 ? (
-          <EmptyState icon={<Database size={22} />} title="Импортов пока нет" desc="Подключите TGStat и запустите импорт по категории." />
+          <EmptyState icon={<Database size={22} />} title="Импортов пока нет" desc="Подключите каталог и запустите импорт по категории." />
         ) : (
           <div className="space-y-2">
             {imports.map((imp) => {
@@ -329,10 +345,23 @@ export function TgStatParserModule() {
                   <div className="flex flex-wrap items-center gap-3">
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
-                        <span className="font-semibold text-fg">{catLabel.get(imp.category) ?? imp.category}</span>
+                        {renaming === imp.id ? (
+                          <input
+                            autoFocus
+                            value={renameDraft}
+                            onChange={(e) => setRenameDraft(e.target.value)}
+                            onBlur={() => void saveRename(imp)}
+                            onKeyDown={(e) => { if (e.key === 'Enter') void saveRename(imp); if (e.key === 'Escape') setRenaming(0) }}
+                            className="input h-7 max-w-[240px] text-sm"
+                            placeholder="Название импорта"
+                          />
+                        ) : (
+                          <span className="font-semibold text-fg">{imp.title || catLabel.get(imp.category) || imp.category}</span>
+                        )}
                         <Badge tone={m.tone}>{m.icon} {m.label}</Badge>
                       </div>
                       <div className="text-xs text-muted">
+                        {imp.title ? `${catLabel.get(imp.category) ?? imp.category} · ` : ''}
                         {regLabel.get(imp.region ?? '') ?? imp.region ?? 'Все регионы'} · {imp.pages_processed}/{imp.max_pages} стр.
                         {imp.min_subscribers > 0 && ` · ≥ ${fmtNum(imp.min_subscribers)} подп.`} · {fmtDate(imp.created_at)}
                       </div>
@@ -346,11 +375,16 @@ export function TgStatParserModule() {
                         <button onClick={() => openChats(imp)} className="btn-icon h-9 w-9" title="Результаты"><Search size={15} /></button>
                       )}
                       {imp.status === 'completed' && imp.total_found > 0 && (
-                        <a href={tgstatExportUrl(imp.id)} className="btn-icon h-9 w-9" title="Скачать CSV"><Download size={15} /></a>
+                        <>
+                          <a href={tgstatExportXlsxUrl(imp.id)} className="btn-icon h-9 w-9" title="Скачать Excel — с фильтрами, по убыванию ПДП"><FileSpreadsheet size={15} /></a>
+                          <a href={tgstatExportUrl(imp.id)} className="btn-icon h-9 w-9" title="Скачать CSV"><Download size={15} /></a>
+                        </>
                       )}
                       {(imp.status === 'queued' || imp.status === 'running') && (
                         <button onClick={() => handleCancel(imp.id)} className="btn-icon h-9 w-9" title="Отменить"><StopCircle size={15} /></button>
                       )}
+                      <button onClick={() => { setRenaming(imp.id); setRenameDraft(imp.title || '') }}
+                        className="btn-icon h-9 w-9" title="Переименовать"><Pencil size={15} /></button>
                       {imp.status !== 'running' && imp.status !== 'queued' && (
                         <button onClick={() => handleDelete(imp.id)} className="btn-icon h-9 w-9 text-rose-300" title="Удалить"><Trash2 size={15} /></button>
                       )}
@@ -378,7 +412,8 @@ export function TgStatParserModule() {
           ) : (
             <>
               <div className="mb-3 flex justify-end">
-                <a href={tgstatExportUrl(openImport.id)} className="btn-primary h-9 text-sm"><Download size={15} /> Экспорт CSV</a>
+                <a href={tgstatExportXlsxUrl(openImport.id)} className="btn-primary h-9 text-sm"><FileSpreadsheet size={15} /> Excel</a>
+                <a href={tgstatExportUrl(openImport.id)} className="btn-ghost h-9 text-sm"><Download size={15} /> CSV</a>
               </div>
               <div className="max-h-[28rem] space-y-2 overflow-y-auto">
                 {chats.map((c) => (

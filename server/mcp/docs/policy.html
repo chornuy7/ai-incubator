@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Murmex MCP — data use policy</title>
+<style>
+:root{
+  --bg:#f7f8fa; --panel:#fff; --line:#e2e5ea; --fg:#12151a; --muted:#5d6470;
+  --accent:#2f6feb; --danger:#c0362c; --danger-weak:#fdecea; --warn:#9a6300; --warn-weak:#fdf3e0;
+  --code:#f2f4f7; --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#0f1216; --panel:#161a20; --line:#272d36; --fg:#e6e9ef; --muted:#98a1b0;
+  --accent:#6ea3ff; --danger:#ff8177; --danger-weak:#2c1817; --warn:#e0aa4a; --warn-weak:#2a2113;
+  --code:#1b2027;
+}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.65 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+main{max-width:820px;margin:0 auto;padding:34px 22px 110px}
+a{color:var(--accent)}
+code{font-family:var(--mono);background:var(--code);padding:.12em .38em;border-radius:4px;font-size:.88em}
+h1{font-size:26px;margin:0 0 6px;letter-spacing:-.02em}
+h2{font-size:18px;margin:34px 0 8px;letter-spacing:-.01em;padding-top:14px;border-top:1px solid var(--line)}
+h3{font-size:15px;margin:20px 0 6px}
+.meta{color:var(--muted);font-size:13px;margin:0 0 24px}
+.lead{color:var(--muted);margin:0 0 6px}
+ul{padding-left:20px}
+li{margin:5px 0}
+table{border-collapse:collapse;width:100%;font-size:14px;margin:12px 0}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--muted);font-weight:600;font-size:11.5px;text-transform:uppercase;letter-spacing:.04em}
+tbody tr:last-child td{border-bottom:0}
+td.mono{font-family:var(--mono);font-size:12.5px}
+.box{border:1px solid var(--line);border-radius:10px;padding:13px 16px;margin:14px 0;background:var(--panel)}
+.box.danger{background:var(--danger-weak);border-color:var(--danger)}
+.box.danger b{color:var(--danger)}
+.box.warn{background:var(--warn-weak);border-color:var(--warn)}
+.box.warn b{color:var(--warn)}
+footer{margin-top:44px;padding-top:16px;border-top:1px solid var(--line);color:var(--muted);font-size:13px}
+</style>
+</head>
+<body>
+<main>
+
+<h1>Murmex MCP — data use policy</h1>
+<p class="meta">
+  Applies to the protected resource <code>/api/v1/mcp</code> ·
+  Referenced from <a href="/.well-known/oauth-protected-resource/api/v1/mcp">protected resource metadata</a>
+  as <code>resource_policy_uri</code> (RFC 9728) ·
+  Version 1 — 27 August 2026
+</p>
+
+<p class="lead">
+  This page states what the Murmex MCP endpoint returns to a client, what a client may and may not
+  do with it, and what obligations follow from the fact that this API performs real actions against
+  real people on Telegram. It is written for whoever integrates an AI orchestrator against this
+  server. "Client" below means any software holding an API key, including an autonomous agent.
+</p>
+
+<h2>1. What the resource returns</h2>
+
+<p class="lead">Three categories, with different obligations attached.</p>
+
+<table>
+  <thead><tr><th>Category</th><th>Where it comes from</th><th>Contains</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><b>Schema and catalogue</b><br><span style="color:var(--muted)">no personal data</span></td>
+      <td class="mono">list_modules, describe_module, describe_block, list_capabilities (modules, services), resources/*, prompts/*</td>
+      <td>Module descriptors, parameters, limits, presets, prices, platform subsystem descriptions.</td>
+    </tr>
+    <tr>
+      <td><b>Account holder data</b><br><span style="color:var(--muted)">personal data</span></td>
+      <td class="mono">describe_capability(kind: "user"), list_capabilities(kind: "user"), GET /api/v1/capabilities/user[s]</td>
+      <td>User id, display name, e-mail address, role names, permission map, balance and paid modules.</td>
+    </tr>
+    <tr>
+      <td><b>Operational data</b><br><span style="color:var(--muted)">may contain personal data</span></td>
+      <td class="mono">get_task, create_task</td>
+      <td>Task status and progress, the initiator, and the last 20 log lines. Log lines name the managed account that acted and state why an action was performed or skipped.</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>
+  The endpoint does <b>not</b> return Telegram session strings, passwords, API keys, proxy credentials,
+  or the message bodies of conversations. If any of those ever appear in a response, treat it as a
+  security defect and report it (§8).
+</p>
+
+<h2>2. Purpose limitation</h2>
+
+<p>
+  Data obtained from this resource may be used only to plan, validate, launch, monitor and report on
+  work inside the Murmex account the key belongs to. Specifically:
+</p>
+<ul>
+  <li>Schema and catalogue data may be held for as long as it is useful, including in a model's context
+    window and in a cache. It describes software, not people. Respect <code>ttlMs</code> if you cache it.</li>
+  <li>Account holder data may be used to decide what the key is permitted to do and to attribute work.
+    It must not be used to build a profile of that person for any other purpose.</li>
+  <li>Operational data may be used to follow a run, diagnose it and report on it.</li>
+</ul>
+
+<h2>3. What a client must not do</h2>
+
+<div class="box danger">
+  <b>Prohibited without exception.</b>
+  <ul>
+    <li>Export account holder data (name, e-mail, roles, balance) to any third-party system, or disclose
+      it to anyone other than the operator on whose behalf the client is acting.</li>
+    <li>Use data returned by this resource as training data for a model, or submit it to a third-party
+      model provider for any purpose other than serving the operator's own request in the moment.</li>
+    <li>Combine data from this resource with external data sets to re-identify, enrich or profile
+      message recipients.</li>
+    <li>Retain the API key anywhere it is readable by another tenant, another customer, or an end user.</li>
+    <li>Use the resource to reach people who have asked not to be contacted (§5).</li>
+  </ul>
+</div>
+
+<h2>4. Retention</h2>
+
+<ul>
+  <li>Keep account holder data only for the lifetime of the session that needed it. Do not persist it
+    to your own store as a matter of course.</li>
+  <li>Task logs may be persisted for operational history. They name managed accounts, so treat that
+    store with the same care as the rest of the operator's data.</li>
+  <li>The server records that a call was made, by which key and to which tool, for audit. It does not
+    record the content of generated messages in this endpoint's responses.</li>
+</ul>
+
+<h2>5. Data the client supplies, and the people behind it</h2>
+
+<p>
+  This is the part that separates this API from an ordinary data endpoint. Several modules take a list
+  of <b>third parties who have not interacted with the operator</b> and contact them:
+</p>
+
+<table>
+  <thead><tr><th>Module</th><th>What the client supplies</th><th>What happens to a real person</th></tr></thead>
+  <tbody>
+    <tr><td class="mono">mailing</td><td>phone numbers, usernames</td><td>Receives a first, unsolicited direct message.</td></tr>
+    <tr><td class="mono">neuro-dialogs</td><td>—</td><td>Their incoming message is answered by a model, and they are guided toward a target action.</td></tr>
+    <tr><td class="mono">neuro-commenting, neuro-chatting, mass-react, mass-looking, autoposting</td><td>channels, groups</td><td>Public interaction under their posts or in their groups.</td></tr>
+    <tr><td class="mono">parsing-*</td><td>channels, groups</td><td>Their public profile is collected into a database.</td></tr>
+  </tbody>
+</table>
+
+<p>The operator, not this platform, is the controller of that data. By supplying it you confirm that:</p>
+<ul>
+  <li>you have a lawful basis to process those people's data and to contact them, under the law that
+    applies to them and to you;</li>
+  <li>you honour opt-outs. A person who asks not to be written to must be added to the platform
+    blacklist, which is enforced before every action in every module, including by phone number in any
+    notation;</li>
+  <li>you do not use the platform for content that is unlawful where the recipient is, and you accept
+    that Telegram's own rules apply on top of this policy.</li>
+</ul>
+
+<div class="box warn">
+  <b>Automated decisions about people.</b> <code>neuro-dialogs</code> classifies replies and moves a
+  lead through a funnel automatically. If the people concerned are in a jurisdiction that grants rights
+  over automated processing, those rights are the operator's to honour — this API gives you the lead
+  record and the conversation, so you are able to.
+</div>
+
+<h2>6. Actions are real and irreversible</h2>
+
+<p>
+  <code>create_task</code> is not a simulation. It publishes to Telegram from live accounts and debits
+  the balance. Nothing it does can be undone — <code>stop_task</code> halts further actions but does
+  not retract those already taken, and Telegram offers no rollback.
+</p>
+<ul>
+  <li>Call <code>validate_task</code> first and proceed only on <code>valid: true</code>.</li>
+  <li>Read the <code>warnings</code>: they mark fields you set that will be silently ignored.</li>
+  <li>An autonomous agent should have a human confirm the launch. The tool is annotated
+    <code>destructiveHint: true</code> precisely so a client can gate it.</li>
+</ul>
+
+<h2>7. Credentials</h2>
+
+<p>
+  The API key is a bearer credential: whoever holds it acts with the full permissions of its owner.
+  Send it only in the <code>Authorization</code> header, never in a URL, and never in a page a third
+  party can view. If it leaks, have it rotated in the server environment — it is not issued or
+  revocable from the admin panel.
+</p>
+
+<h2>8. Reporting a problem</h2>
+
+<p>
+  Report a suspected leak of personal data, an unexpected field in a response, or a compromised key to
+  the platform operator through the support channel in the panel. If you believe the endpoint returned
+  data it should not have, stop using the affected data and report it before doing anything else with it.
+</p>
+
+<h2>9. Status of this document</h2>
+
+<p>
+  This is the operational data-use policy referenced by <code>resource_policy_uri</code> in the
+  resource's RFC 9728 metadata. It states how this API expects its data to be handled; it is not legal
+  advice and it does not replace the operator's own privacy notice, processing agreements or terms of
+  service. Where this policy and the applicable law disagree, the law governs.
+</p>
+
+<footer>
+  Murmex MCP · <a href="/docs/mcp">live API documentation</a> ·
+  <a href="/.well-known/oauth-protected-resource/api/v1/mcp">protected resource metadata</a>
+</footer>
+
+</main>
+</body>
+</html>

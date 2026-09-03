@@ -1,0 +1,299 @@
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
+import { MessagesSquare, Search, RefreshCw, Users, Radio } from 'lucide-react'
+import { ConversationBubble } from '@/features/conversation/ConversationBubble'
+import { AccountRail } from '@/features/conversation/AccountRail'
+import { ReplyBox } from '@/features/conversation/ReplyBox'
+import { activeAccounts, useApp } from '@/mocks/store'
+import { PageHeader, Card, EmptyState, Segmented, Badge } from '@/shared/ui'
+import { HelpButton } from '@/features/neuro-commenting/moduleUi'
+import {
+  fetchInbox, fetchMessages, sendDialogMessage, markDialogRead,
+  type InboxDialog, type DialogMessage, type PeerRef,
+} from '@/api/neuroDialogsApi'
+import { fetchAccountChannels } from '@/api/accountsApi'
+import type { AccountChannel } from '@/shared/types'
+import { useTabParam } from '@/shared/lib/useTabParam'
+
+const peerOf = (d: InboxDialog): PeerRef => ({ peerId: d.peerId, accessHash: d.accessHash, username: d.username })
+
+export function InboxPage() {
+  const pushToast = useApp((s) => s.pushToast)
+  const accounts = activeAccounts(useApp((s) => s.data))
+  const [sel, setSel] = useState<Set<string>>(new Set())
+  const [dialogs, setDialogs] = useState<InboxDialog[]>([])
+  const [loadingInbox, setLoadingInbox] = useState(false)
+  const [active, setActive] = useState<InboxDialog | null>(null)
+  const [messages, setMessages] = useState<DialogMessage[]>([])
+  const [loadingMsgs, setLoadingMsgs] = useState(false)
+  /** Есть ли в Telegram сообщения старше загруженных. Историю не храним у себя —
+   *  подгружаем из Telegram по требованию, как это делает сам мессенджер. */
+  const [hasMore, setHasMore] = useState(false)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const [search, setSearch] = useState('')
+  const [draft, setDraft] = useState('')
+  const [sending, setSending] = useState(false)
+  const endRef = useRef<HTMLDivElement>(null)
+  const [tab, setTab] = useTabParam<number>(0) // 0 = диалоги, 1 = группы/каналы
+  const [groups, setGroups] = useState<(AccountChannel & { accountName: string })[]>([])
+  const [loadingGroups, setLoadingGroups] = useState(false)
+
+  // Обзор аккаунта показывает ОДИН аккаунт «как будто открыли его Telegram»: несколько
+  // сразу здесь бессмысленны — диалоги разных людей в одном списке не читаются, и
+  // непонятно, от чьего имени отвечаешь. Множество оставлено, потому что дочерние
+  // панели принимают набор, но в нём всегда не больше одного.
+  const pickAcc = (id: string) => setSel(new Set([id]))
+
+  // MR-134: диплинк из уведомления «Пропущенные ЛС» — /panel/inbox?account=…&peer=…
+  // Сразу выбираем аккаунт и запоминаем, какой диалог открыть, когда список подгрузится.
+  const [params, setParams] = useSearchParams()
+  const [pendingPeer, setPendingPeer] = useState<string | null>(null)
+  useEffect(() => {
+    const acc = params.get('account')
+    const peer = params.get('peer')
+    if (!acc) return
+    setSel(new Set([acc]))
+    if (peer) setPendingPeer(peer)
+    // чистим query, чтобы обновление страницы не переоткрывало диалог заново
+    setParams({}, { replace: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  // когда диалоги выбранного аккаунта загрузились — открываем нужный (по username или id).
+  useEffect(() => {
+    if (!pendingPeer || !dialogs.length) return
+    const norm = (s: string) => String(s || '').replace(/^@/, '').toLowerCase()
+    const want = norm(pendingPeer)
+    const d = dialogs.find((x) => norm(x.username) === want || String(x.peerId) === String(pendingPeer))
+    if (d) { void openDialog(d); setPendingPeer(null) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dialogs, pendingPeer])
+
+  const loadInbox = async () => {
+    if (!sel.size) { setDialogs([]); return }
+    setLoadingInbox(true)
+    try {
+      const r = await fetchInbox([...sel], 120)
+      setDialogs(r.dialogs.filter((d) => !d.error))
+    } catch (err) {
+      pushToast({ type: 'error', title: 'Не удалось загрузить диалоги', desc: err instanceof Error ? err.message : '' })
+    } finally { setLoadingInbox(false) }
+  }
+  useEffect(() => { void loadInbox() }, [sel])
+
+  const loadGroups = async () => {
+    if (!sel.size) { setGroups([]); return }
+    setLoadingGroups(true)
+    try {
+      const per = await Promise.all([...sel].map(async (id) => {
+        const acc = accounts.find((a) => a.id === id)
+        const name = acc?.name || acc?.phone || id.slice(-6)
+        try {
+          const r = await fetchAccountChannels(id)
+          return (r.channels || []).map((c) => ({ ...c, accountName: name }))
+        } catch { return [] }
+      }))
+      setGroups(per.flat())
+    } catch (err) {
+      pushToast({ type: 'error', title: 'Не удалось загрузить группы', desc: err instanceof Error ? err.message : '' })
+    } finally { setLoadingGroups(false) }
+  }
+  useEffect(() => { if (tab === 1) void loadGroups() }, [sel, tab])
+
+  const openDialog = async (d: InboxDialog) => {
+    setActive(d); setMessages([]); setLoadingMsgs(true); setHasMore(false)
+    try {
+      const r = await fetchMessages(d.accountId, peerOf(d), 60)
+      setMessages([...r.messages].sort((a, b) => a.date - b.date))
+      setHasMore(!!r.hasMore)
+      void markDialogRead(d.accountId, peerOf(d)).then(() => {
+        setDialogs((prev) => prev.map((x) => x.key === d.key ? { ...x, unread: 0 } : x))
+      }).catch(() => {})
+      setTimeout(() => endRef.current?.scrollIntoView(), 50)
+    } catch (err) {
+      pushToast({ type: 'error', title: 'Не удалось открыть диалог', desc: err instanceof Error ? err.message : '' })
+    } finally { setLoadingMsgs(false) }
+  }
+
+  const send = async () => {
+    if (!active || !draft.trim()) return
+    setSending(true)
+    try {
+      const r = await sendDialogMessage(active.accountId, peerOf(active), draft.trim())
+      setMessages((m) => [...m, r.message])
+      setDraft('')
+      setTimeout(() => endRef.current?.scrollIntoView(), 50)
+    } catch (err) {
+      pushToast({ type: 'error', title: 'Не отправлено', desc: err instanceof Error ? err.message : '' })
+    } finally { setSending(false) }
+  }
+
+  /** Догрузить более старую часть переписки — прямо из Telegram, ничего не кэшируя. */
+  const loadEarlier = async () => {
+    if (!active || !messages.length) return
+    setLoadingMore(true)
+    try {
+      const oldest = messages[0]
+      const r = await fetchMessages(active.accountId, peerOf(active), 60, oldest.id)
+      const older = r.messages.filter((m) => !messages.some((x) => x.id === m.id))
+      setMessages((prev) => [...older, ...prev].sort((a, b) => a.date - b.date))
+      setHasMore(!!r.hasMore && older.length > 0)
+    } catch (err) {
+      pushToast({ type: 'error', title: 'Не удалось догрузить', desc: err instanceof Error ? err.message : '' })
+    } finally { setLoadingMore(false) }
+  }
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    return q ? dialogs.filter((d) => d.name.toLowerCase().includes(q) || d.username.toLowerCase().includes(q)) : dialogs
+  }, [dialogs, search])
+  const totalUnread = useMemo(() => dialogs.reduce((s, d) => s + (d.unread || 0), 0), [dialogs])
+
+  return (
+    <div>
+      <PageHeader
+        title="Обзор аккаунта (Telegram)"
+        subtitle="Что делает аккаунт: в каких группах и каналах состоит, все диалоги и переписка — как будто открыли его Telegram."
+        icon={<MessagesSquare size={22} />}
+        badge={totalUnread ? `${totalUnread} непроч.` : undefined}
+        actions={<div className="flex items-center gap-2"><HelpButton topic="inbox" className="h-10 w-10" /><button onClick={() => void (tab === 0 ? loadInbox() : loadGroups())} className="btn-ghost h-10"><RefreshCw size={16} className={(loadingInbox || loadingGroups) ? 'animate-spin' : ''} /> Обновить</button></div>}
+      />
+
+      {accounts.length === 0 ? (
+        <span className="text-sm text-white/40">Нет аккаунтов в панели.</span>
+      ) : (
+      // Два яруса: слева аккаунты, справа их содержимое. Раньше выбор был стеной
+      // одинаковых чипов с сырыми id — ни имени, ни статуса, ни поиска.
+      <div className="grid gap-3 lg:grid-cols-[280px_1fr]">
+        <AccountRail
+          accounts={accounts}
+          selected={sel}
+          onOnly={pickAcc}
+        />
+
+        <div className="min-w-0">
+      {sel.size === 0 ? (
+        <EmptyState icon={<MessagesSquare size={26} />} title="Выберите аккаунт" desc="Кликните аккаунт слева — покажем, в каких группах он состоит и все его диалоги, как в Telegram." />
+      ) : (
+        <>
+        <div className="mb-3">
+          <Segmented
+            options={[`Диалоги${totalUnread ? ` · ${totalUnread}` : ''}`, `Группы и каналы${groups.length ? ` · ${groups.length}` : ''}`]}
+            value={tab}
+            onChange={setTab}
+            size="sm"
+          />
+        </div>
+
+        {tab === 1 ? (
+          <Card className="p-0">
+            {loadingGroups ? (
+              <div className="p-6 text-center text-sm text-white/40">Загрузка групп и каналов…</div>
+            ) : groups.length === 0 ? (
+              <div className="p-6 text-center text-sm text-white/40">Аккаунт не состоит в группах/каналах (или список недоступен).</div>
+            ) : (
+              <div className="flex flex-col">
+                {groups.map((g, i) => (
+                  <div key={`${g.accountName}:${g.id}:${i}`} className="flex items-center gap-3 border-b border-white/5 px-4 py-2.5">
+                    {g.kind === 'channel' ? <Radio size={16} className="text-iris-300" /> : <Users size={16} className="text-spark-300" />}
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-sm text-white">{g.title}</div>
+                      <div className="flex flex-wrap gap-x-3 text-xs text-white/40">
+                        {g.username && <span>@{g.username}</span>}
+                        {g.members != null && <span>{g.members} участников</span>}
+                        <span>акк: {g.accountName}</span>
+                      </div>
+                    </div>
+                    <Badge tone={g.kind === 'channel' ? 'iris' : 'spark'}>{g.kind === 'channel' ? 'канал' : 'группа'}</Badge>
+                    {g.unread > 0 && <span className="rounded-full bg-spark-500 px-1.5 text-xs font-bold text-black">{g.unread}</span>}
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
+        ) : (
+        <div className="grid gap-3 lg:grid-cols-[360px_1fr]">
+          {/* Список диалогов */}
+          <Card className="flex max-h-[70vh] flex-col overflow-hidden p-0">
+            <div className="border-b border-white/10 p-2">
+              <div className="flex items-center gap-2 rounded-lg bg-white/5 px-2">
+                <Search size={14} className="text-white/40" />
+                <input className="h-8 flex-1 bg-transparent text-sm outline-none" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Поиск диалогов…" />
+              </div>
+            </div>
+            <div className="flex-1 overflow-y-auto">
+              {loadingInbox && !dialogs.length ? (
+                <p className="p-6 text-center text-sm text-white/40">Загрузка диалогов…</p>
+              ) : filtered.length === 0 ? (
+                <p className="p-6 text-center text-sm text-white/40">Диалогов нет</p>
+              ) : filtered.map((d) => (
+                <button key={d.key} onClick={() => void openDialog(d)} className={`flex w-full items-start gap-2 border-b border-white/5 px-3 py-2 text-left hover:bg-white/5 ${active?.key === d.key ? 'bg-white/10' : ''}`}>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="truncate text-sm font-medium text-white">{d.name}</span>
+                      {/* MR-135: бот vs человек — большая зелёная плашка «БОТ» (была мелким шрифтом). */}
+                      {d.isBot && <span className="shrink-0 rounded bg-emerald-500 px-1.5 py-0.5 text-[10px] font-bold uppercase leading-none text-white" title="Это Telegram-бот, а не человек">БОТ</span>}
+                      {d.unread > 0 && <span className="ml-auto shrink-0 rounded-full bg-spark-500 px-1.5 text-xs font-bold text-black">{d.unread}</span>}
+                    </div>
+                    <div className="truncate text-xs text-white/40">{d.last || '—'}</div>
+                    <div className="text-[10px] text-white/25">акк: {d.accountName}</div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </Card>
+
+          {/* Переписка */}
+          <Card className="flex max-h-[70vh] flex-col overflow-hidden p-0">
+            {!active ? (
+              <div className="flex flex-1 flex-col items-center justify-center gap-2 p-8 text-center text-white/40">
+                <MessagesSquare size={28} />
+                <div className="font-medium text-white/70">Выберите диалог</div>
+                <div className="text-sm">Слева — все диалоги и группы выбранных аккаунтов.</div>
+              </div>
+            ) : (
+              <>
+                <div className="border-b border-white/10 px-4 py-2.5">
+                  <div className="flex items-center gap-2">
+                    <div className="font-semibold text-white">{active.name}</div>
+                    {/* MR-135: крупная зелёная плашка «БОТ» рядом с названием диалога. */}
+                    {active.isBot && <span className="rounded-md bg-emerald-500 px-2 py-0.5 text-xs font-bold uppercase text-white" title="Это Telegram-бот, а не человек">БОТ</span>}
+                  </div>
+                  <div className="text-xs text-white/40">{active.username ? `@${active.username} · ` : ''}через {active.accountName}</div>
+                </div>
+                <div className="flex-1 space-y-1.5 overflow-y-auto p-3">
+                  {hasMore && !loadingMsgs && (
+                    <button
+                      onClick={() => void loadEarlier()}
+                      disabled={loadingMore}
+                      className="btn-ghost mx-auto mb-1 h-7 px-3 text-xs"
+                    >
+                      {loadingMore ? 'Загружаем…' : 'Показать более раннее'}
+                    </button>
+                  )}
+                  {loadingMsgs ? (
+                    <p className="py-6 text-center text-sm text-white/40">Загрузка…</p>
+                  ) : messages.length === 0 ? (
+                    <p className="py-6 text-center text-sm text-white/40">Сообщений нет</p>
+                  ) : messages.map((m) => (
+                    <ConversationBubble key={m.id} m={m} dialog={active} tone="spark" />
+                  ))}
+                  <div ref={endRef} />
+                </div>
+                <div className="border-t border-white/10 p-2">
+                  {/* §9.3: общий компонент — раньше здесь была своя разметка без превью
+                      медиа и с однострочным input, и экран отставал от НейроДиалогов. */}
+                  <ReplyBox value={draft} onChange={setDraft} onSend={() => void send()} sending={sending} />
+                </div>
+              </>
+            )}
+          </Card>
+        </div>
+        )}
+        </>
+      )}
+        </div>
+      </div>
+      )}
+    </div>
+  )
+}

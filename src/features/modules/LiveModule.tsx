@@ -1,20 +1,29 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Play, Sparkles, Hash, Settings2, Clock, Users, MessageSquareText,
-  Heart, Eye, Shield, MessageCircle, Database, Trophy, LayoutGrid, List, Link2, Plus,
+  Play, Sparkles, Hash, Clock, Users, MessageSquareText,
+  Heart, Eye, Shield, MessageCircle, Database, Trophy, Link2, Plus, Terminal, ArrowUpRight, Lock, LockOpen, Flame,
 } from 'lucide-react'
-import { MODULES, type ModuleConfig } from '@/shared/config/modules'
+import { MODULES, isCombatModule, combatConfirmText, type ModuleConfig } from '@/shared/config/modules'
 import { activeAccounts, useApp } from '@/mocks/store'
+import { cn } from '@/shared/lib/utils'
+import { equalize, equalizeUnlocked, redistribute, percentSum } from '@/shared/lib/percentDistribution'
 import { ToggleGroup, Segmented, EmptyState, Badge } from '@/shared/ui'
-import { LogsPanel } from '@/widgets/LogsPanel'
+import { isGoalExpired } from '@/api/goalsApi'
+import { fetchCampaigns, type Campaign } from '@/api/campaignsApi'
+import { createAutomationRule } from '@/api/automationApi'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { useModuleTask } from './shared/useModuleTask'
 import {
   SectionCard, NumberField,
-  ProtectionBlock, TargetsEditor, LaunchPanel, PromptCards, loadPromptBodies, AiGenerationNotice,
-  FolderPicker, BlacklistEditor, GlobalPromptEditor, TimingSection, SaveToFolderModal,
+  ProtectionTimings, TargetsEditor, LaunchPanel, PromptCards, usePromptStore, AiGenerationNotice,
+  FolderPicker, BlacklistEditor, GlobalPromptEditor, TimingSection, SaveToFolderModal, TaskStartedModal, SavePresetModal, presetSettings,
+  LaunchSteps, markCurrentStep, usePresetCarry, ProtectionLevelPicker, PROTECTION_CAP, useBlockAccess, type LaunchStep,
 } from './shared'
-import type { ModuleTaskSettings } from '@/api/modulesApi'
+import type { ModuleTaskSettings, ModulePresetSettings } from '@/api/modulesApi'
+import { confirmDialog } from '@/shared/lib/dialog'
+import { LaunchCost } from './shared/LaunchCost'
+import { useGlobalPace, delayMultiplier, taskSeconds, perAccountShare, joinSeconds } from '@/shared/lib/pace'
+import { PresetBar } from './shared/PresetBar'
 
 const DEFAULT_DELAYS = {
   comment: [30, 120] as [number, number],
@@ -26,6 +35,42 @@ const DEFAULT_DELAYS = {
 
 const DURATION_MIN_BY_PROTECTION_LEVEL = [60, 45, 30]
 
+// 3 уровня прогрева (решение 14.07): длительность и «естественность» темпа.
+/*
+ * Уровень задаёт ТЕМП, а не срок задачи (вопрос владельца 26.08: «показывает 7 ч работы,
+ * но я выбрал прогрев 2 дня»). «2 дня» читалось как длительность запуска, хотя за ним
+ * стоит 40 действий в день; сколько задача идёт, определяет её лимит действий, и 23
+ * действия при шаге ~36 минут — это как раз около семи часов. Пишем темп прямо.
+ */
+const WARM_LEVELS = ['Быстрый · ~40 действий/день', 'Нормальный · ~20 в день', 'Бережный · ~10 в день']
+
+// §3.5: расчётное min/avg/max время вместо абстрактного «интервала».
+function fmtDur(sec: number): string {
+  if (!isFinite(sec) || sec <= 0) return '—'
+  if (sec < 60) return `${Math.round(sec)}с`
+  if (sec < 3600) return `${Math.round(sec / 60)} мин`
+  return `${(sec / 3600).toFixed(1)} ч`
+}
+
+/** Чего именно лимит — по типу модуля, чтобы в панели было «Лимит комментариев», а не голое «Лимит». */
+function limitNoun(moduleKey: string, cfg: ModuleConfig): string {
+  const byKey: Record<string, string> = {
+    'neuro-commenting': 'комментариев',
+    'neuro-chatting': 'сообщений',
+    'neuro-dialogs': 'сообщений',
+    'mass-react': 'реакций',
+    'mass-looking': 'просмотров',
+    warming: 'действий',
+    ggr: 'проверок',
+    'parsing-users': 'участников',
+    'parsing-messages': 'сообщений',
+    'parsing-comments': 'комментариев',
+  }
+  if (byKey[moduleKey]) return byKey[moduleKey]
+  if (cfg.reactionSettings) return 'реакций'
+  return 'действий'
+}
+
 export function LiveModule({ moduleKey }: { moduleKey: string }) {
   const cfg = MODULES[moduleKey]
   if (!cfg) return null
@@ -34,19 +79,57 @@ export function LiveModule({ moduleKey }: { moduleKey: string }) {
 
 function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
   const accounts = activeAccounts(useApp((s) => s.data))
-  const { task, running, starting, start, stop, savePreset, deletePreset, presets, pushToast } = useModuleTask(moduleKey)
+  // Список аккаунтов читаем через ref: applyPreset — стабильный колбэк, и включать в его
+  // зависимости меняющийся массив значило бы пересоздавать его на каждое обновление парка.
+  const accountsRef = useRef(accounts)
+  accountsRef.current = accounts
+  const { task, running, starting, start, stop, savePreset, deletePreset, editPreset, presets, pushToast, justStarted, dismissJustStarted } = useModuleTask(moduleKey)
+
+  // R6: гейтинг блоков внутри модуля по правам роли. Демо/админ — всё видно.
+  // run — запуск/аккаунты; settings — настройки/тайминги/защита; targets — цели/каналы;
+  // templates — промпты/эмодзи; results/logs — просмотр результатов/логов.
+  // Общий помощник на все модули (26.08): раньше проверка жила только здесь, и в
+  // парсерах выданные права на блоки не действовали вовсе.
+  const showBlock = useBlockAccess(moduleKey)
 
   const [selected, setSelected] = useState<Set<string>>(new Set())
-  const [toggles, setToggles] = useState<Record<number, number>>({})
+  // «Мониторинг новых» стоит первым в списке и выбран по умолчанию (так просил
+  // владелец) — бот следит за каналом и комментирует каждый новый пост.
+  const [toggles, setToggles] = useState<Record<number, number>>(
+    moduleKey === 'neuro-commenting' ? { 0: 0 } : {},
+  )
   const [aiProtect, setAiProtect] = useState(true)
   const [protLevel, setProtLevel] = useState(1)
+  const [notifyStatus, setNotifyStatus] = useState(true) // MR-134: уведомлять о статусе этой задачи
   const [probability, setProbability] = useState(cfg.probabilitySlider?.value ?? cfg.reactionSettings?.probability.value ?? 30)
   const [maxActions, setMaxActions] = useState(cfg.workModeFields?.maxValue ?? cfg.reactionSettings?.max.value ?? 100)
+  /*
+   * Минимум общего лимита равен максимуму (правка 27.08).
+   *
+   * Он был нулём, а воркер берёт цель ЖРЕБИЕМ из [min, max]: «сделай 2 комментария»
+   * превращалось в «сделай от 1 до 2», и задача честно останавливалась на одном. При
+   * сотне действий разброс незаметен, при двух — выглядит поломкой (владелец 27.08:
+   * «дал задачу сделать 2 комментария, в итоге сделал 1»).
+   *
+   * Разнообразие между аккаунтами даёт отдельный жребий «сколько сделает один аккаунт»
+   * (minPerAccount/maxPerAccount) — вот там он к месту: одинаковые числа у всех профилей
+   * и есть тот самый след фермы. А ОБЩЕЕ число человек назвал явно, и занижать его молча
+   * нельзя.
+   */
   const [minActions, setMinActions] = useState(0)
   const [maxPerAcc, setMaxPerAcc] = useState(10)
   const [minPerAcc, setMinPerAcc] = useState(0)
   const [minWords, setMinWords] = useState(0)
   const [durationMinutes, setDurationMinutes] = useState(cfg.reactionSettings?.duration.value ?? 60)
+  // Сколько последних постов канала рассматриваем: массовые реакции («Существующие
+  // посты») и нейрокомментинг («Последние N»).
+  const [lastPostsCount, setLastPostsCount] = useState(3)
+  // Брать ли ОДИН случайный пост из подходящих (иначе — все подходящие за заход).
+  const [pickOne, setPickOne] = useState(true)
+  // Есть ли у модуля СВОИ параметры в карточке «Параметры и лимиты». У прогрева,
+  // масслукинга и прочих их нет: темп задаёт «Уровень прогрева» / тайминги, и после
+  // переноса карточки наверх (19.08) она оказалась пустой — выглядело как «пропала».
+  // Там, где параметров нет, карточкой оформляется панель запуска внизу, как было.
   const [srcTab, setSrcTab] = useState(0)
   const [input, setInput] = useState('')
   const [targets, setTargets] = useState<string[]>([])
@@ -54,15 +137,76 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
   const [postUrls, setPostUrls] = useState<string[]>([])
   const [keywords, setKeywords] = useState((cfg.defaultKeywords || []).join(', '))
   const [activePrompt, setActivePrompt] = useState(0)
-  const [promptBodies, setPromptBodies] = useState(() => loadPromptBodies(moduleKey, cfg.messagePrompts ?? []))
+  // MR-185: тексты промптов — из базы, по владельцу. Своей копии у карточек больше нет,
+  // поэтому применённый шаблон её и не перекрывает (это же чинит MR-176).
+  const { bodies: promptBodies, saveCard: savePromptCard, replace: replacePrompts } = usePromptStore(moduleKey, cfg.messagePrompts ?? [])
   const [delayPreset, setDelayPreset] = useState(1)
   const [delays, setDelays] = useState(DEFAULT_DELAYS)
+  // MR-56: КАКУЮ задержку брать в расчёт времени. У нейрокомментинга поле называется
+  // «Задержка комментария» и правит delays.comment, а delays.action остаётся дефолтным.
+  // Раньше нижний чип и плашка «≈ время» всегда читали delays.action — поэтому при ручной
+  // правки задержки в Custom верхний блок пересчитывался (он берёт comment), а низ стоял
+  // на старом числе. Один источник на все места: тот же выбор, что у «Защиты и таймингов».
+  const commentPrimary = !!cfg.richLayout && !cfg.reactionSettings && moduleKey === 'neuro-commenting'
+  const primaryDelay = (commentPrimary ? delays.comment : delays.action) ?? delays.action ?? delays.comment
+  const [goalId] = useState('')
+  // §0: задача запускается ПОД КАМПАНИЕЙ; цель наследуется из кампании.
+  // Пока кампаний нет — остаётся прямой выбор цели (мягкая миграция, ничего не ломаем).
+  const [campaigns, setCampaigns] = useState<Campaign[]>([])
+  const [campaignId] = useState('')
+  const [warmLevel, setWarmLevel] = useState(1)
+  // Срок прогрева в днях (правка 27.08). Минимум двое суток — короче профиль не «зреет»,
+  // а просто получает пачку действий за вечер.
+  const [warmDays, setWarmDays] = useState(2)
+  // Сколько часов в сутки аккаунт активен: в это окно и раскладываются его действия.
+  const [warmHours, setWarmHours] = useState(8)
+  const [postWindow, setPostWindow] = useState(10) // §3.5: сколько последних постов обрабатывать
+  const [stopWordsText, setStopWordsText] = useState('') // §3.5: пропускать посты с этими словами
+  const [analyzeImages, setAnalyzeImages] = useState(false) // §10.5: анализ фото в посте vision-моделью
+  const [typeWeights, setTypeWeights] = useState<number[]>(() => equalize(cfg.messagePrompts?.length || 0))
+  // §13 (MR-61): замки — закреплённое значение не трогается при перераспределении остатка.
+  const [lockedWeights, setLockedWeights] = useState<boolean[]>([])
+  // §13 (уточнение заказчика): «тронутые» — поля, куда пользователь ВВЁЛ значение вручную.
+  // Их сохраняем при перераспределении ДАЖЕ без замка; остаток делят только НЕтронутые.
+  const [touchedWeights, setTouchedWeights] = useState<boolean[]>([])
+  const weightSum = percentSum(typeWeights)
+  // §13 (MR-61): «поровну» выравнивает только НЕзакреплённые и сбрасывает ручной ввод.
+  const balanceTypeWeights = () => {
+    const n = cfg.messagePrompts?.length ?? 0
+    if (!n) return
+    setTypeWeights((w) => equalizeUnlocked(w.length === n ? w : equalize(n), lockedWeights))
+    setTouchedWeights([])
+  }
+  const toggleWeightLock = (i: number) => setLockedWeights((l) => { const n = [...l]; n[i] = !n[i]; return n })
+  // Кампании этого модуля (кампания настраивает ровно один модуль — §0).
+  useEffect(() => {
+    void fetchCampaigns({ moduleKey }).then(({ campaigns: cs }) => setCampaigns(cs.filter((c) => c.status !== 'done'))).catch(() => {})
+  }, [moduleKey])
+  // §3.5: главное поле — «на 1 аккаунт»; общий лимит считается авто = на-аккаунт × число выбранных.
+  const accCount = selected.size || 1
+  useEffect(() => {
+    setMaxActions(maxPerAcc * accCount)
+    setMinActions(minPerAcc * accCount)
+  }, [maxPerAcc, minPerAcc, accCount])
   const [palette, setPalette] = useState<Set<string>>(new Set(['👍', '❤️', '🔥']))
-  const [viewTab, setViewTab] = useState(1)
-  const [historyGrid, setHistoryGrid] = useState(true)
   const [folderSave, setFolderSave] = useState<string[] | null>(null)
+  const [presetModalOpen, setPresetModalOpen] = useState(false)
+  // §6: настройка автоматизации прямо в модуле — запуск по времени, одно-/многоразово.
+  const [schedOpen, setSchedOpen] = useState(false)
+  const [schedMode, setSchedMode] = useState(0) // 0 — однократно, 1 — ежедневно, 2 — интервал
+  const [schedAt, setSchedAt] = useState(() => {
+    const d = new Date(Date.now() + 3600_000)
+    d.setSeconds(0, 0)
+    return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16)
+  })
+  const [schedTime, setSchedTime] = useState('12:00')
+  const [schedEvery, setSchedEvery] = useState(60)
+  const [schedSaving, setSchedSaving] = useState(false)
   const [lookModeIdx, setLookModeIdx] = useState(0)
   const [lookPostsCount, setLookPostsCount] = useState(cfg.lookPostsDefault ?? 3)
+  // «Самый новый» — не отдельный lookMode, а posts + 1 пост. Держим отдельным флагом,
+  // иначе выбор нельзя отличить от «Посты» с числом 1, набранным вручную.
+  const [newestOnly, setNewestOnly] = useState(false)
 
   const g = (i: number) => toggles[i] ?? 0
   const setTg = (i: number, v: number) => setToggles((t) => ({ ...t, [i]: v }))
@@ -73,6 +217,30 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
   )
   const isParser = cfg.parserLayout || cfg.participantsLayout
   const isGgr = cfg.ggrLayout
+  // «Режим работы» ищем по названию, а не по индексу: у нейрочатинга группа перед ним
+  // удалена (мёртвый «Режим реакции»), и жёсткая [1] нашла бы пустоту. Номер слота
+  // состояния при этом остаётся 1 — он к порядку в конфиге не привязан.
+  const workGroup = cfg.toggleGroups?.find((gr) => gr.label === 'Режим работы') ?? cfg.toggleGroups?.[1]
+  // Есть ли ЧТО показать в карточке «Параметры и лимиты»: у нейрокомментинга это выбор
+  // постов и стоп-слова, у остальных боевых модулей — объём задачи (режим работы, сколько
+  // сделает аккаунт). У прогрева и парсеров ни того, ни другого: там карточка оформляет
+  // панель запуска, как было до переноса 19.08.
+  /*
+   * Прогрев тоже получает «Параметры и лимиты» (жалоба владельца 26.08: «там даже
+   * параметров и лимитов нихуя не отображается»). Раньше он был исключён, потому что
+   * темп задаёт «Уровень прогрева». Но лимит действий у задачи ЕСТЬ — просто уходил
+   * невидимым значением по умолчанию, а из него считается и ETA («7 ч»), и когда
+   * задача закончится. Настройка, которая молча решает за человека, — хуже показанной.
+   */
+  /*
+   * У прогрева своей карточки лимитов НЕТ (правка 27.08: «здесь нестыковка, убрать
+   * параметры и лимиты»). Вчера я её включил, и получилось два источника правды: карточка
+   * показывала «всего 10, на аккаунт 0–10», а блок прогрева — «≈40 действий на аккаунт».
+   * Число действий у прогрева выводится из уровня и срока, руками его задавать нечего —
+   * поэтому всё живёт в одном блоке «Уровень прогрева».
+   */
+  const hasLimits = !isParser && !isGgr && !cfg.warmingLayout && (cfg.aiProtection || cfg.richLayout || cfg.lookingLayout)
+  const hasParamsCard = moduleKey === 'neuro-commenting' || hasLimits
 
   const maybeSaveToFolder = (list: string[]) => {
     // (5) Предложить сохранить добавленный список в папку через красивый модал.
@@ -100,25 +268,39 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     maybeSaveToFolder(next)
   }
 
+  const { carry, remember } = usePresetCarry()
+  // Глобальный множитель темпа (ИИ-безопасность) — чтобы оценка стоимости/времени
+  // считалась по той же шкале, что и реальный прогон.
+  const globalPace = useGlobalPace()
+
   const buildSettings = useCallback((): ModuleTaskSettings => ({
-    accountIds: isGgr ? accounts.map((a) => a.id) : [...selected],
+    ...carry(), // параметры шаблона, которым нет ручки в форме (напр. threads у MCP-задач)
+    accountIds: [...selected],
     targets,
     channels: targets,
-    keywords: keywords.split(/[\n,;]+/).map((k) => k.trim()).filter(Boolean),
-    commentMode: g(0),
+    keywords: keywords.split(/[\n;]+/).map((k) => k.trim()).filter(Boolean),
+    // Один выбор в форме раскладывается в два поля воркера:
+    //   0 «Мониторинг новых»   → любые посты (2) + мониторинг (4): планка на канал
+    //   1 «Только последний»   → любые посты (2) + оставить самый свежий (0)
+    //   2 «Последние N»        → любые посты (2) + без доп. отсева (2); N — это postWindow
+    //   3 «По ключевым словам» → фильтр по словам (1) в тех же N постах (2)
+    commentMode: cfg.toggleGroups ? (g(0) === 3 ? 1 : 2) : g(0),
+    pickOne,
     workMode: g(1),
-    postFilter: g(2),
+    postFilter: cfg.toggleGroups ? [4, 0, 2, 2][g(0)] ?? 4 : g(2),
     probability,
     maxActions,
     maxComments: maxActions,
+    // см. комментарий у minActions: общее число выполняется точно, без жребия.
     maxPerAccount: maxPerAcc,
-    minActions,
-    minComments: minActions,
+    minActions: minActions || maxActions,
+    minComments: minActions || maxActions,
     minPerAccount: minPerAcc,
     minWords,
     durationMinutes: g(1) === 1 ? durationMinutes : undefined,
     aiProtection: aiProtect,
     protectionLevel: protLevel,
+    notifyOnStatus: notifyStatus,
     promptIndex: activePrompt,
     promptText: promptBodies[activePrompt],
     promptOverrides: promptBodies,
@@ -127,34 +309,118 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     postUrls,
     limit: maxActions,
     delays,
+    // §0: под кампанией цель наследуется от неё; без кампании — прямой выбор цели.
+    ...(campaignId ? { campaignId } : {}),
+    ...((campaignId ? campaigns.find((c) => c.id === campaignId)?.goalId : goalId) ? { goalId: (campaignId ? campaigns.find((c) => c.id === campaignId)?.goalId : goalId) as string } : {}),
+    ...(cfg.warmingLayout ? { warmLevel, warmDays, warmHours } : {}),
+    // Массовые реакции: режим и глубина. Отдельным полем, а не общим commentMode —
+    // воркер читает именно reactMode, и дескриптор MCP описывает его.
+    ...(cfg.reactionSettings ? { reactMode: g(0), lastPostsCount } : {}),
+    ...(moduleKey === 'neuro-commenting' ? { postWindow, stopWords: stopWordsText.split(/[\n;]+/).map((w) => w.trim()).filter(Boolean), analyzeImages } : {}),
+    // Распределение уходит в задачу у любого модуля с промптами — воркеры выбирают тип
+    // взвешенным броском на каждое действие (см. pickPrompt в workers.js).
+    ...((cfg.messagePrompts?.length ?? 0) > 0 && weightSum > 0 ? { typeWeights } : {}),
     ...(cfg.lookingLayout ? {
       lookMode: cfg.lookModeOptions?.[lookModeIdx]?.value ?? 'stories',
       lookPostsCount,
     } : {}),
-  }), [selected, targets, postUrls, toggles, probability, maxActions, minActions, maxPerAcc, minPerAcc, minWords, durationMinutes, aiProtect, protLevel, activePrompt, promptBodies, delayPreset, palette, delays, keywords, isGgr, accounts, cfg, lookModeIdx, lookPostsCount])
+  }), [carry, selected, targets, postUrls, toggles, probability, maxActions, minActions, maxPerAcc, minPerAcc, minWords, durationMinutes, aiProtect, protLevel, notifyStatus, activePrompt, promptBodies, delayPreset, palette, delays, keywords, isGgr, accounts, cfg, lookModeIdx, lookPostsCount, goalId, campaignId, campaigns, warmLevel, warmDays, warmHours, postWindow, stopWordsText, analyzeImages, moduleKey, typeWeights, weightSum])
 
   const hasPostTargets = postUrls.length > 0
+  // Многомодульность (20.08): аккаунт МОЖНО брать, пока он работает в другом модуле.
+  // Мешают ровно два случая, и оба — зеркало серверного правила (accountLocks.js):
+  //   1) вторая задача ТОГО ЖЕ модуля — она дублировала бы работу;
+  //   2) прогрев в любую сторону — греющийся профиль ещё не боец, а бойца нельзя греть.
+  // Без второго пункта форма пускала выбор, а сервер отказывал уже на «Запустить» —
+  // оператор узнавал о запрете в последний момент и не понимал, чей аккаунт виноват.
   const busySelectedCount = useMemo(
-    () => [...selected].filter((id) => accounts.some((a) => a.id === id && a.busyIn)).length,
-    [selected, accounts],
+    () => [...selected].filter((id) => accounts.some((a) => {
+      if (a.id !== id || !a.busyIn) return false
+      const mods = a.busyIn.modules ?? [{ moduleKey: a.busyIn.moduleKey }]
+      return mods.some((m) => m.moduleKey === moduleKey || m.moduleKey === 'warming' || moduleKey === 'warming')
+    })).length,
+    [selected, accounts, moduleKey],
   )
-  const canStart = isGgr
-    ? accounts.length > 0
-    : selected.size > 0 && busySelectedCount === 0 && (!needsTargets || targets.length > 0 || hasPostTargets)
-  const warn = !canStart
-    ? (isGgr ? 'Нет аккаунтов в панели' : busySelectedCount ? `${busySelectedCount} акк. заняты в другом модуле` : !selected.size ? 'Выберите аккаунты' : 'Добавьте группу или ссылку на пост')
-    : undefined
+  // #5: сумма процентов типов не должна превышать 100 — иначе запуск блокируется.
+  const typesOver100 = moduleKey === 'neuro-commenting' && weightSum > 100
+  // Кампания с истёкшим дедлайном «останавливает работу» — не даём запуск
+  // (зеркало 409 бэкенда). Дедлайн переехал из цели в кампанию (24.07): срок —
+  // свойство этапа работы, цель «200 переходов» сама по себе бессрочна.
+  const goalExpired = useMemo(() => {
+    const c = campaignId ? campaigns.find((x) => x.id === campaignId) : null
+    return c ? isGoalExpired(c) : false
+  }, [campaignId, campaigns])
+  const canStart = (isGgr
+    ? selected.size > 0
+    : selected.size > 0 && busySelectedCount === 0 && (!needsTargets || targets.length > 0 || hasPostTargets))
+    && !typesOver100 && !goalExpired
+  // §11 (MR-53): перечисляем ВСЕ незаполненные обязательные поля, а не первое попавшееся —
+  // чтобы оператор сразу видел всё, что мешает запуску, а не открывал по одному.
+  const missingRequired = useMemo(() => {
+    const m: string[] = []
+    if (isGgr) { if (!selected.size) m.push('выберите аккаунты для проверки'); return m }
+    if (!selected.size) m.push('выберите аккаунты')
+    else if (busySelectedCount) m.push(moduleKey === 'warming'
+      ? `${busySelectedCount} аккаунт(а) заняты работой — прогрев берёт только свободные профили`
+      : `${busySelectedCount} аккаунт(а) заняты несовместимой задачей (тот же модуль или прогрев) — остановите её или выберите другие`)
+    if (needsTargets && !targets.length && !hasPostTargets) m.push('добавьте цель — группу или ссылку на пост')
+    return m
+  }, [isGgr, selected, busySelectedCount, needsTargets, targets, hasPostTargets])
+  const warn = goalExpired
+    ? 'Дедлайн выбранной цели истёк — работа по ней остановлена. Продлите дедлайн или уберите цель.'
+    : typesOver100
+      ? `Сумма типов комментариев ${weightSum}% > 100 — уменьшите (кнопка «= 100%»)`
+      : missingRequired.length
+        ? `Заполните обязательное: ${missingRequired.join('; ')}`
+        : undefined
+
+  // §3.5: предупреждать о математически противоречивых лимитах (макс vs аккаунты vs мин/акк).
+  const limitWarn = useMemo(() => {
+    if (isGgr || !selected.size) return null
+    if (maxActions && maxActions < selected.size) return `Общий лимит ${maxActions} меньше числа аккаунтов (${selected.size}) — часть не получит заданий.`
+    if (minPerAcc && maxPerAcc && minPerAcc > maxPerAcc) return `Минимум на аккаунт (${minPerAcc}) больше максимума (${maxPerAcc}).`
+    if (minPerAcc && maxActions && minPerAcc * selected.size > maxActions) return `Минимум на аккаунт × аккаунты (${minPerAcc * selected.size}) больше общего лимита (${maxActions}).`
+    return null
+  }, [isGgr, selected.size, maxActions, minPerAcc, maxPerAcc])
 
   const durationPeriodMin = Math.min(DURATION_MIN_BY_PROTECTION_LEVEL[protLevel] ?? 0, durationMinutes)
 
-  const handleStart = () => void start(buildSettings(), `${cfg.title} · ${selected.size || accounts.length} акк.`)
-  const handleSave = () => {
-    const name = window.prompt('Название пресета')
-    if (name?.trim()) void savePreset(name.trim(), buildSettings())
+  const handleStart = async () => {
+    // #4: запуск боевого модуля = реальные действия в Telegram — подтверждаем.
+    if (isCombatModule(moduleKey) && !(await confirmDialog({ title: 'Реальные действия в Telegram', message: combatConfirmText(moduleKey), confirmLabel: 'Начать', tone: 'danger' }))) return
+    void start(buildSettings(), `${cfg.title} · ${selected.size} акк.`)
+  }
+  // §7: шаблон — цветная метка + владелец; открываем модалку вместо простого prompt.
+  const handleSave = () => setPresetModalOpen(true)
+
+  // §6: создать правило автоматизации с текущими настройками модуля (не запуская сейчас).
+  const createSchedule = async () => {
+    if (!canStart) return pushToast({ type: 'error', title: 'Сначала настройте запуск', desc: warn })
+    const schedule = schedMode === 0
+      ? { type: 'once' as const, at: new Date(schedAt).getTime() }
+      : schedMode === 1
+        ? { type: 'daily' as const, time: schedTime }
+        : { type: 'interval' as const, intervalMinutes: Math.max(1, schedEvery) }
+    setSchedSaving(true)
+    try {
+      await createAutomationRule({
+        name: `${cfg.title}${campaignId ? ` · ${campaigns.find((c) => c.id === campaignId)?.name ?? ''}` : ''}`,
+        moduleKey,
+        campaignId: campaignId || null,
+        accountIds: [...selected],
+        settings: buildSettings() as unknown as Record<string, unknown>,
+        schedule,
+      })
+      pushToast({ type: 'success', title: 'Правило автоматизации создано', desc: 'Смотрите в разделе «Автоматизация»' })
+      setSchedOpen(false)
+    } catch (e) {
+      pushToast({ type: 'error', title: 'Не создано', desc: e instanceof Error ? e.message : '' })
+    } finally { setSchedSaving(false) }
   }
 
-  // Восстанавливает настройки из пресета в форму (аккаунты не трогаем — они ситуативны).
-  const applyPreset = useCallback((s: ModuleTaskSettings) => {
+  // Восстанавливает настройки из шаблона в форму (аккаунты не трогаем — они ситуативны).
+  const applyPreset = useCallback((s: ModulePresetSettings) => {
+    remember(s)
     setToggles({ 0: s.commentMode ?? 0, 1: s.workMode ?? 0, 2: s.postFilter ?? 0 })
     if (s.aiProtection !== undefined) setAiProtect(s.aiProtection)
     if (s.protectionLevel !== undefined) setProtLevel(s.protectionLevel)
@@ -165,9 +431,18 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     if (s.minPerAccount !== undefined) setMinPerAcc(s.minPerAccount)
     if (s.minWords !== undefined) setMinWords(s.minWords)
     if (s.durationMinutes !== undefined) setDurationMinutes(s.durationMinutes)
+    if (s.reactMode !== undefined) setToggles((t) => ({ ...t, 0: s.reactMode as number }))
+    if (s.lastPostsCount !== undefined) setLastPostsCount(s.lastPostsCount)
+    if (s.pickOne !== undefined) setPickOne(s.pickOne)
+    // Обратная раскладка: в шаблоне лежат значения воркера, в форме — один индекс.
+    if (cfg.toggleGroups && (s.commentMode !== undefined || s.postFilter !== undefined)) {
+      const pos = s.commentMode === 1 ? 3 : (s.postFilter === 4 ? 0 : s.postFilter === 0 ? 1 : 2)
+      setToggles((t) => ({ ...t, 0: pos }))
+      if (s.commentMode === 0) setPickOne(true)
+    }
     if (Array.isArray(s.keywords)) setKeywords(s.keywords.join(', '))
     if (s.promptIndex !== undefined) setActivePrompt(s.promptIndex)
-    if (Array.isArray(s.promptOverrides)) setPromptBodies(s.promptOverrides)
+    if (Array.isArray(s.promptOverrides)) replacePrompts(s.promptOverrides)
     if (s.delayPreset !== undefined) setDelayPreset(s.delayPreset)
     if (s.delays) setDelays((d) => ({ ...d, ...s.delays }))
     if (Array.isArray(s.emojis)) setPalette(new Set(s.emojis))
@@ -177,156 +452,164 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
       if (i >= 0) setLookModeIdx(i)
     }
     if (s.lookPostsCount !== undefined) setLookPostsCount(s.lookPostsCount)
-    pushToast({ type: 'success', title: 'Пресет применён' })
-  }, [cfg.lookModeOptions, pushToast])
+    if (s.lookMode !== undefined) setNewestOnly(s.lookMode === 'posts' && s.lookPostsCount === 1)
+    // Эти семь полей шаблон СОХРАНЯЛ, но не восстанавливал — отсюда и жалоба «сохранил
+    // шаблон, а настройки слетают»: применённый шаблон молча оставлял значения текущей
+    // формы, и оператор получал не то, что сохранял (ТЗ 19.08 §3).
+    if (s.notifyOnStatus !== undefined) setNotifyStatus(s.notifyOnStatus)
+    if (Array.isArray(s.postUrls)) setPostUrls(s.postUrls)
+    if (s.warmLevel !== undefined) setWarmLevel(s.warmLevel)
+    if (s.warmDays !== undefined) setWarmDays(Number(s.warmDays) || 2)
+    if (s.warmHours !== undefined) setWarmHours(Number(s.warmHours) || 8)
+    if (s.postWindow !== undefined) setPostWindow(s.postWindow)
+    if (Array.isArray(s.stopWords)) setStopWordsText(s.stopWords.join(', '))
+    if (s.analyzeImages !== undefined) setAnalyzeImages(s.analyzeImages)
+    if (s.typeWeights) setTypeWeights(s.typeWeights)
 
-  const logs = task?.logs ?? []
-  const history = task?.commentHistory ?? task?.history ?? []
+    /*
+     * Аккаунты шаблон СОХРАНЯЛ, но не восстанавливал (вопрос владельца 26.08).
+     * Подпись честно предупреждала «выбор аккаунтов не меняется», но пользы в этом не
+     * было: человек сохранял набор целиком, а получал его без исполнителей.
+     *
+     * Восстанавливаем только те, что доступны ЗДЕСЬ И СЕЙЧАС. Шаблон переживает удаление
+     * аккаунта, переезд в корзину и передачу другому человеку — подставлять id вслепую
+     * значило бы отдать в запуск то, чего у человека нет, а суб получил бы чужие профили
+     * из шаблона владельца. Чего не хватает — говорим вслух, а не молчим.
+     */
+    if (Array.isArray(s.accountIds)) {
+      const have = new Set(accountsRef.current.map((a: { id: string }) => a.id))
+      const restored = s.accountIds.filter((id) => have.has(id))
+      const missing = s.accountIds.length - restored.length
+      setSelected(new Set(restored))
+      pushToast({
+        type: 'success',
+        title: 'Шаблон применён',
+        desc: missing
+          ? `Аккаунтов из шаблона: ${restored.length} из ${s.accountIds.length}. Остальные недоступны — удалены, в корзине или не выданы вам.`
+          : restored.length ? `Аккаунтов подставлено: ${restored.length}` : undefined,
+      })
+      return
+    }
+    pushToast({ type: 'success', title: 'Шаблон применён' })
+  }, [cfg.lookModeOptions, cfg.toggleGroups, pushToast, remember, replacePrompts])
+
   const results = task?.results ?? []
   const progressDone = task?.progress.actionsDone ?? task?.progress.commentsSent ?? 0
 
   const launchStats = useMemo(() => {
     if (isGgr) return [
-      { icon: <Trophy size={18} />, color: '#7145ff', label: 'Аккаунтов', value: String(accounts.length) },
+      { icon: <Trophy size={18} />, color: '#7145ff', label: 'Выбрано', value: String(selected.size), warn: selected.size === 0 },
       { icon: <Database size={18} />, color: '#06b6d4', label: 'Проверено', value: String(results.length) },
       { icon: <Shield size={18} />, color: '#0ec464', label: 'Валидных', value: String(results.filter((r) => r.status === 'valid').length) },
       { icon: <Clock size={18} />, color: '#f59e0b', label: 'Статус', value: task?.status ?? '—' },
     ]
+    /*
+     * У прогрева свои плитки (правка 27.08). Общие врали дважды: «Группы 0» — у прогрева
+     * целей нет вовсе, он сам ищет каналы; «Лимит действий 10» — остаток поля, которого
+     * в витрине больше нет, вместо честных «40 на аккаунт за 2 дня».
+     */
+    if (cfg.warmingLayout) {
+      const perDay = [40, 20, 10][warmLevel]
+      const perAcc = warmDays * perDay
+      const acc = Math.max(1, selected.size)
+      return [
+        { icon: <Users size={18} />, color: '#7145ff', label: 'Аккаунты', value: String(selected.size), warn: selected.size === 0 },
+        { icon: <Flame size={18} />, color: '#f59e0b', label: 'Действий на аккаунт', value: String(perAcc) },
+        { icon: <Clock size={18} />, color: '#0ec464', label: 'Займёт', value: `${warmDays} ${warmDays === 1 ? 'день' : warmDays < 5 ? 'дня' : 'дней'}` },
+        { icon: <Hash size={18} />, color: '#06b6d4', label: 'Всего действий', value: String(perAcc * acc) },
+      ]
+    }
     return [
       { icon: <Users size={18} />, color: '#7145ff', label: 'Аккаунты', value: String(selected.size), warn: selected.size === 0 },
-      { icon: <Hash size={18} />, color: '#06b6d4', label: cfg.unit?.title ?? 'Цели', value: String(targets.length), warn: needsTargets && !targets.length && !hasPostTargets },
-      { icon: <Clock size={18} />, color: '#0ec464', label: 'Интервал', value: `${delays.action[0]}–${delays.action[1]}с` },
-      { icon: cfg.reactionSettings ? <Heart size={18} /> : <MessageSquareText size={18} />, color: '#f59e0b', label: 'Лимит', value: String(maxActions) },
+      // §12 (MR-59): «цели» перед запуском — с учётом ссылок на посты (mass-react), а не
+      // только групп: иначе при выбранных постах счётчик показывал 0, хотя цели есть.
+      { icon: <Hash size={18} />, color: '#06b6d4', label: cfg.sourceTabs?.label ?? 'Группы', value: String(targets.length + postUrls.length), warn: needsTargets && !targets.length && !hasPostTargets },
+      {
+        icon: <Clock size={18} />, color: '#0ec464', label: '≈ время',
+        // Правка 24.08: та же формула и тот же множитель темпа, что в «Защите и таймингах»
+        // и в нижней панели. Раньше здесь брались БАЗОВЫЕ задержки, без пересчёта по
+        // пресету и глобальному множителю — плашка обещала время короче реального.
+        value: (() => {
+          const accCount = Math.max(1, selected.size || accounts.length)
+          const mul = delayMultiplier(protLevel, delayPreset, globalPace)
+          const perAcc = perAccountShare(maxActions || 0, accCount)
+          if (!perAcc) return '—'
+          // Вступления входят во время и здесь: воркер спит эту паузу один раз
+          // на пару «аккаунт + цель» (замечание владельца 26.08).
+          const tgt = targets.length + postUrls.length
+          const jFrom = joinSeconds(tgt, perAcc, (delays.join?.[0] ?? 0) * mul)
+          const jTo = joinSeconds(tgt, perAcc, (delays.join?.[1] ?? 0) * mul)
+          const from = taskSeconds(maxActions || 0, accCount, primaryDelay[0] * mul) + jFrom
+          const to = taskSeconds(maxActions || 0, accCount, primaryDelay[1] * mul) + jTo
+          return `${fmtDur(from)}–${fmtDur(to)}`
+        })(),
+      },
+      { icon: cfg.reactionSettings ? <Heart size={18} /> : <MessageSquareText size={18} />, color: '#f59e0b', label: `Лимит ${limitNoun(moduleKey, cfg)}`, value: String(maxActions) },
     ]
-  }, [selected, targets, postUrls, hasPostTargets, delays, maxActions, cfg, isGgr, accounts, results, task, needsTargets])
+  }, [selected, targets, postUrls, hasPostTargets, delays, maxActions, cfg, isGgr, accounts, results, task, needsTargets, protLevel, delayPreset, globalPace, warmLevel, warmDays])
+
+  // §11 (MR-55): пошаговый roadmap перед запуском — что сделано и что осталось.
+  // `anchor` — «связка» с блоком на странице: клик по шагу прокручивает к нему.
+  // `optional` — необязательный шаг (тонкая настройка): показываем серым, он не
+  // становится «текущим» и не мешает запуску.
+  const launchSteps = useMemo(() => {
+    const steps: LaunchStep[] = []
+    if (cfg.accountPicker) steps.push({ label: 'Аккаунты', done: selected.size > 0, anchor: 'sec-accounts' })
+    if (needsTargets && !cfg.warmingLayout) steps.push({ label: cfg.sourceTabs?.label ?? 'Группы', done: targets.length > 0 || hasPostTargets, anchor: 'sec-targets' })
+    // Правка 14.08: у прогрева блок «Защита» убран → в степпере вместо «Защита» шаг «Уровень».
+    if (cfg.warmingLayout) steps.push({ label: 'Уровень', done: true, optional: true, anchor: 'sec-warm' })
+    else steps.push({ label: 'Защита', done: true, optional: true, anchor: 'sec-settings' })
+    // MR-136: шаг назван «Параметры» (а не «Запуск») — он ведёт к секции «Параметры и лимиты»,
+    // а не к запуску. Раньше клик по «Запуск» кидал на «Параметры» (сбивало), плюс «Запуск»
+    // конфликтовал по смыслу с кнопкой «Начать». Запуск — это кнопка «Начать».
+    steps.push({ label: 'Параметры', done: true, optional: true, anchor: 'sec-run' })
+    return markCurrentStep(steps)
+  }, [cfg, selected, needsTargets, targets, hasPostTargets])
 
   return (
     <div className="space-y-4">
+      <TaskStartedModal task={justStarted} moduleTitle={cfg.title} onClose={dismissJustStarted} />
+      {/* ТЗ 06.08 §10: выбор шаблона — вверху, до всех настроек (TPL-001). */}
+      <PresetBar presets={presets} onApply={applyPreset} onSave={handleSave}
+        onEdit={editPreset} onDelete={deletePreset} disabled={running} />
       <SaveToFolderModal open={folderSave !== null} onClose={() => setFolderSave(null)} targets={folderSave ?? []} />
-      {cfg.accountPicker && (
-        <AccountPicker selected={selected} onChange={setSelected} actions={cfg.accountActions} withFilters={!!cfg.accountFilters} selectedTitle={cfg.selectedTitle ?? 'Выбрано'} />
-      )}
-
-      {(cfg.aiProtection || cfg.richLayout || cfg.lookingLayout || cfg.warmingLayout || isGgr) && (
-        <SectionCard icon={<Settings2 size={18} />} title={cfg.settingsTitle ?? 'Настройки'} badge={targets.length ? `${targets.length} целей` : undefined}>
-          {cfg.aiProtection && <ProtectionBlock enabled={aiProtect} onEnabled={setAiProtect} level={protLevel} onLevel={setProtLevel} />}
-
-          {cfg.reactionSettings ? (
-            <div className="grid gap-4 lg:grid-cols-2">
-              <div className="space-y-4 rounded-2xl border border-line bg-elevated/40 p-4">
-                <ToggleGroup label="Режим" options={cfg.reactionSettings.modes} value={g(0)} onChange={(v) => setTg(0, v)} />
-                <div>
-                  <div className="mb-1 flex justify-between text-sm text-muted"><span>{cfg.reactionSettings.probability.label}</span><span className="text-spark-300">{probability}%</span></div>
-                  <input type="range" min={0} max={100} value={probability} onChange={(e) => setProbability(Number(e.target.value))} className="w-full accent-spark-500" />
-                </div>
-              </div>
-              <div className="rounded-2xl border border-line bg-elevated/40 p-4 text-sm text-muted">Лимиты, длительность и задержки — в секции «Тайминги и задержки» ниже.</div>
-            </div>
-          ) : cfg.toggleGroups ? (
-            <div className="rounded-2xl border border-line bg-elevated/40 p-4 space-y-4">
-              <ToggleGroup label={cfg.toggleGroups[0].label} options={cfg.toggleGroups[0].options} value={g(0)} onChange={(v) => setTg(0, v)} />
-              {g(0) === 1 && <textarea value={keywords} onChange={(e) => setKeywords(e.target.value)} rows={2} className="input resize-none text-sm" placeholder="ключевые слова" />}
-              <div>
-                <div className="mb-1 flex justify-between text-sm text-muted"><span>{cfg.probabilitySlider?.label ?? 'Вероятность'}</span><span className="text-spark-300">{probability}%</span></div>
-                <input type="range" min={0} max={100} value={probability} onChange={(e) => setProbability(Number(e.target.value))} className="w-full accent-spark-500" />
-              </div>
-              {cfg.toggleGroups[2] && <ToggleGroup label={cfg.toggleGroups[2].label} options={cfg.toggleGroups[2].options} value={g(2)} onChange={(v) => setTg(2, v)} />}
-            </div>
-          ) : isParser ? (
-            <div className="space-y-3">
-              <label className="label">Ключевые слова / источник</label>
-              <textarea value={keywords} onChange={(e) => setKeywords(e.target.value)} rows={2} className="input resize-none text-sm" />
-              <NumberField label="Лимит результатов" value={maxActions} onChange={setMaxActions} />
-            </div>
-          ) : isGgr ? (
-            <div className="space-y-3 text-sm text-muted">
-              <p>
-                Проверка идёт по всем аккаунтам панели: подключаем сессию, запрашиваем профиль и складываем балл.
-                Настраивать нечего — жмите «{cfg.primaryAction ?? 'Проверить все'}».
-              </p>
-              <div className="grid gap-2 sm:grid-cols-3">
-                {[
-                  ['Живая сессия', '+50'],
-                  ['Есть @username', '+15'],
-                  ['Привязан телефон', '+10'],
-                ].map(([label, pts]) => (
-                  <div key={label} className="flex items-center justify-between rounded-xl border border-line bg-elevated/40 px-3 py-2">
-                    <span className="text-xs text-muted">{label}</span>
-                    <span className="text-sm font-bold text-iris-300">{pts}</span>
-                  </div>
-                ))}
-              </div>
-              <p className="text-xs">
-                Валидный аккаунт получает статус «активный» и сохранённый балл. Мёртвая сессия — 0 и «разавторизирован».
-                Сетевые ошибки и таймауты не понижают балл, аккаунты в карантине и спамблоке проверка не «лечит».
-                Занятые другим модулем аккаунты пропускаются.
-              </p>
-            </div>
-          ) : cfg.lookingLayout && cfg.lookModeOptions ? (
-            <div className="rounded-2xl border border-line bg-elevated/40 p-4 space-y-4">
-              <ToggleGroup
-                label={cfg.lookModeLabel ?? 'Что смотреть'}
-                options={cfg.lookModeOptions.map((o) => o.label)}
-                value={lookModeIdx}
-                onChange={setLookModeIdx}
-              />
-              {cfg.lookModeOptions[lookModeIdx]?.value !== 'stories' && (
-                <div className="space-y-2">
-                  <span className="label">{cfg.lookPostsLabel ?? 'Сколько последних постов смотреть'}</span>
-                  <div className="flex flex-wrap gap-2">
-                    {(cfg.lookPostsPresets ?? []).map((p) => (
-                      <button
-                        key={p.value}
-                        type="button"
-                        onClick={() => setLookPostsCount(p.value)}
-                        className={`rounded-xl border px-3.5 py-2 text-sm font-semibold transition-all ${
-                          lookPostsCount === p.value
-                            ? 'border-spark-500/50 bg-spark-500/12 text-spark-300'
-                            : 'border-line bg-elevated text-muted hover:border-spark-500/30 hover:text-fg'
-                        }`}
-                      >
-                        {p.label}
-                      </button>
-                    ))}
-                  </div>
-                  <NumberField label="Произвольное число постов" value={lookPostsCount} onChange={setLookPostsCount} min={1} max={50} suffix="1–50" />
-                </div>
-              )}
-            </div>
-          ) : (
-            <p className="text-sm text-muted">Лимиты и задержки настраиваются в секции «Тайминги и задержки» ниже.</p>
-          )}
+      <SavePresetModal open={presetModalOpen} onClose={() => setPresetModalOpen(false)} onSave={(name, color, owner, withAccounts) => savePreset(name, presetSettings(buildSettings(), withAccounts), color, owner)} />
+      {/*
+        Роль закрыла ВСЕ блоки модуля — говорим об этом вслух.
+        Находка 26.08: у роли, где разрешён только блок «Результаты», страница
+        нейромодуля рендерилась пустой (сам блок результатов есть лишь у парсеров и GGR).
+        Человек видел заголовок и белое поле и решал, что модуль сломан. Пустой экран
+        обязан объяснять себя: доступ закрыт настройками роли, а не ошибкой.
+      */}
+      {!(isParser || isGgr
+        ? ['run', 'targets', 'settings', 'templates', 'results', 'logs']
+        // «Результаты» и «Логи» есть только у парсеров и GGR. Учитывать их в остальных
+        // модулях нельзя: роль с разрешённым `*:results` формально «что-то разрешает»,
+        // а на экране всё равно пусто — именно так и выглядела находка 26.08.
+        : ['run', 'targets', 'settings', 'templates']
+      ).some((k) => showBlock(k)) && (
+        <SectionCard icon={<Shield size={18} />} title="Нет доступа к блокам модуля">
+          <p className="text-sm text-muted">
+            Ваша роль закрывает все разделы этого модуля, поэтому настраивать и запускать его нельзя.
+            Права выдаёт администратор: «Пользователи и роли» → ваша роль → блоки модуля.
+          </p>
         </SectionCard>
       )}
 
-      {!isParser && !isGgr && (cfg.aiProtection || cfg.richLayout || cfg.lookingLayout || cfg.warmingLayout) && (
-        <TimingSection
-          workModeOptions={cfg.toggleGroups?.[1]?.options}
-          workMode={g(1)}
-          onWorkMode={(v) => setTg(1, v)}
-          workModeLabel={cfg.toggleGroups?.[1]?.label}
-          durationMinutes={durationMinutes}
-          onDuration={setDurationMinutes}
-          showDurationAlways={!!cfg.reactionSettings}
-          durationPeriodHint={`Период работы: ${durationPeriodMin}–${durationMinutes} мин`}
-          totalLabel={cfg.reactionSettings?.max.label ?? cfg.workModeFields?.maxLabel ?? 'Макс. действий'}
-          total={{ min: minActions, max: maxActions, onMin: setMinActions, onMax: setMaxActions }}
-          perAccount={{ min: minPerAcc, max: maxPerAcc, onMin: setMinPerAcc, onMax: setMaxPerAcc }}
-          minWords={cfg.workModeFields?.minWords ? { value: minWords, onChange: setMinWords } : null}
-          delays={delays}
-          onDelays={(updater) => setDelays(updater)}
-          showComment={!!cfg.richLayout && !cfg.reactionSettings && moduleKey === 'neuro-commenting'}
-          showAction={!(cfg.richLayout && !cfg.reactionSettings && moduleKey === 'neuro-commenting')}
-          showJoin
-          labels={{ action: cfg.reactionSettings ? 'Задержка между реакциями' : 'Задержка действия', join: 'Задержка вступления' }}
-          delayPresets={cfg.delayPresets ?? ['Мин', 'Рекомендуемые', 'Макс']}
-          delayPreset={delayPreset}
-          onDelayPreset={setDelayPreset}
-        />
+      {/* MR-149: калькулятор цены за действие теперь в ModuleRunner (для всех модулей). */}
+      {cfg.accountPicker && showBlock('run') && (
+        <div id="sec-accounts" className="scroll-mt-24">
+          <AccountPicker moduleKey={moduleKey} selected={selected} onChange={setSelected} actions={cfg.accountActions} withFilters={!!cfg.accountFilters} selectedTitle={cfg.selectedTitle ?? 'Выбрано'} />
+        </div>
       )}
 
-      {(cfg.sourceTabs || needsTargets) && !isGgr && (
-        <SectionCard icon={<Hash size={18} />} title={cfg.sourceTabs?.label ?? 'Цели'} badge={String(targets.length)}>
+      {/* §3.1 (MR-100): порядок блоков = степпер (Аккаунты → Группы → Защита → Запуск).
+          Цели «Группы»/«Посты» идут СРАЗУ после аккаунтов, до блока «Защита» — одинаково во всех модулях.
+          §3 (MR-111): в Массовых реакциях цель зависит от режима — «Мониторинг» показывает Группы,
+          «Реакции на существующие» — ссылки на посты (ниже). */}
+      {showBlock('targets') && (cfg.sourceTabs || needsTargets) && !isGgr && (!cfg.reactionSettings || g(0) === 0) && (
+        <div id="sec-targets" className="scroll-mt-24">
+        <SectionCard icon={<Hash size={18} />} title={cfg.sourceTabs?.label ?? 'Группы'} badge={String(targets.length)} required={needsTargets && !cfg.postLinks}>
           <FolderPicker targets={targets} onLoad={(t) => setTargets((prev) => [...new Set([...t, ...prev])])} />
           <TargetsEditor
             tabs={cfg.sourceTabs?.tabs}
@@ -340,10 +623,17 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
             onRemove={(t) => setTargets((arr) => arr.filter((x) => x !== t))}
             placeholder={cfg.sourceTabs?.placeholder ?? '@username или t.me/...'}
           />
+          {/* §12 (UI-004): чёрный список — во ВСЕХ модулях с целями (решение заказчика «да, ко всем»);
+              компактным блоком рядом с группами. Принимает и отдельный канал, и целую группу. */}
+          <div className="mt-3">
+            <BlacklistEditor title={cfg.blacklistSection ?? 'Чёрный список групп и каналов'} compact />
+          </div>
         </SectionCard>
+        </div>
       )}
 
-      {cfg.postLinks && (
+      {/* §3 (MR-111): ссылки на посты — только в режиме «Реакции на существующие» (mode 1). */}
+      {showBlock('targets') && cfg.postLinks && (!cfg.reactionSettings || g(0) === 1) && (
         <SectionCard icon={<Link2 size={18} />} title={cfg.postLinks.label} badge={String(postUrls.length)}>
           {cfg.postLinks.hint && <p className="mb-3 text-xs text-muted">{cfg.postLinks.hint}</p>}
           <FolderPicker targets={postUrls} onLoad={(t) => setPostUrls((prev) => [...new Set([...t, ...prev])])} />
@@ -372,7 +662,278 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
         </SectionCard>
       )}
 
-      {cfg.reactionPalette && (
+      {/* «Параметры и лимиты» — сразу под целями (правка 19.08). Сколько постов
+          обрабатывать, какие из них брать и лимиты прогона — продолжение разговора
+          про цели. Раньше карточка стояла в самом низу, под защитой и промптами, и
+          до неё добирались, уже настроив всё остальное.  */}
+      {showBlock('run') && hasParamsCard && (
+      <div id="sec-run" className="scroll-mt-24">
+      <SectionCard icon={<Play size={18} />} title="Параметры и лимиты">
+        {limitWarn && !running && (
+          <div className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">⚠ {limitWarn}</div>
+        )}
+        {/*
+          Режим реакций (просьба владельца 26.08: «в массовых реакциях тоже перенести
+          режим в параметры и лимиты»). Раньше он стоял в «Защите и таймингах», под
+          галочкой уведомлений, — а это не защита: это ЧТО обрабатывать, ровно как
+          «Что комментировать» у нейрокомментинга ниже. Теперь оба вопроса в одном месте.
+        */}
+        {/*
+          «Что смотреть» переехало сюда из «Защиты и таймингов» (просьба владельца 26.08):
+          это объём работы, а не защита.
+          Кнопки-пресеты «Самый новый / Последние 3 / Последние 10» убраны — они дублировали
+          поле числа, и «Самый новый» (это просто 1) читался как отдельный режим. Теперь он
+          и стал режимом: четвёртым в ряду, справа от «Истории + посты», а числовое поле
+          осталось одно. На сервер «Самый новый» уходит как posts + 1 пост: отдельного
+          значения lookMode для него нет, и выдумывать его, чтобы сломать валидацию, незачем.
+        */}
+        {showBlock('settings') && cfg.lookingLayout && cfg.lookModeOptions && !running && (
+          <div className="mb-3 space-y-3">
+            <ToggleGroup
+              label={cfg.lookModeLabel ?? 'Что смотреть'}
+              options={[...cfg.lookModeOptions.map((o) => o.label), 'Самый новый']}
+              value={newestOnly ? cfg.lookModeOptions.length : lookModeIdx}
+              onChange={(v) => {
+                const newest = v === cfg.lookModeOptions!.length
+                setNewestOnly(newest)
+                if (newest) { setLookModeIdx(cfg.lookModeOptions!.findIndex((o) => o.value === 'posts')); setLookPostsCount(1) }
+                else setLookModeIdx(v)
+              }}
+            />
+            {!newestOnly && cfg.lookModeOptions[lookModeIdx]?.value !== 'stories' && (
+              <NumberField label={cfg.lookPostsLabel ?? 'Сколько последних постов смотреть'}
+                value={lookPostsCount} onChange={setLookPostsCount} min={1} max={50} suffix="1–50" />
+            )}
+            {newestOnly && <p className="text-xs text-muted">Смотрим только самый свежий пост канала — один на заход.</p>}
+          </div>
+        )}
+        {showBlock('settings') && cfg.reactionSettings && !running && (
+          <div className="mb-3 space-y-3">
+            <ToggleGroup label="Режим" options={cfg.reactionSettings.modes} value={g(0)} onChange={(v) => setTg(0, v)} />
+            {g(0) === 0 ? (
+              <p className="text-xs text-muted">
+                Реакции только на посты, вышедшие <b className="text-fg">после старта задачи</b>. Первый заход в канал
+                запоминает последний пост и ничего не ставит — дальше реагируем на каждый новый.
+                {/* Прогон 22.08: час в этом режиме может дать ноль реакций, и это норма —
+                    пост ещё не вышел. Без этой строки ноль читается как поломка. */}
+                <span className="mt-1 block text-white/50">
+                  Пока новых постов нет, задача ждёт и проверяет канал раз в 5–30 минут. Ноль реакций
+                  здесь — не ошибка: значит, в канале ещё ничего не выходило. Нужны реакции прямо
+                  сейчас — выберите «Существующие посты».
+                </span>
+              </p>
+            ) : (
+              <div className="space-y-1">
+                <NumberField label="Сколько последних постов" value={lastPostsCount} onChange={setLastPostsCount} min={1} max={20} />
+                <p className="text-xs text-muted">Аккаунты разбирают N последних постов канала; один аккаунт — одна реакция на пост.</p>
+              </div>
+            )}
+          </div>
+        )}
+        {showBlock('settings') && moduleKey === 'neuro-commenting' && !running && (
+          <div className="mb-3">
+            {/* Один вопрос — один блок: ЧТО комментировать и из скольких последних постов. */}
+            <ToggleGroup label="Что комментировать" options={cfg.toggleGroups?.[0].options ?? []} value={g(0)} onChange={(v) => setTg(0, v)} />
+            {g(0) === 3 && (
+              <div className="mt-2 space-y-1">
+                <textarea value={keywords} onChange={(e) => setKeywords(e.target.value)} rows={2} className="input resize-none text-sm" placeholder="Ключевые слова через ; или с новой строки — крипта; p2p обмен" />
+                <p className="text-xs text-white/40">Ищем совпадения среди последних постов (число ниже), а не по всей истории канала.</p>
+              </div>
+            )}
+            {g(0) !== 1 && (
+              <label className="mt-2 flex cursor-pointer items-start gap-2 text-xs text-white/60">
+                <input type="checkbox" checked={pickOne} onChange={(e) => setPickOne(e.target.checked)} className="mt-0.5 h-4 w-4 rounded border-line accent-spark-500" />
+                <span>Брать один случайный из подходящих <span className="text-white/30">(снимите — прокомментирует все подходящие за заход)</span></span>
+              </label>
+            )}
+            {g(0) === 0 && (
+              /*
+               * Объяснение прямо в форме (уточнение владельца 22.08). Прогон показал, что
+               * час работы в этом режиме может дать ноль действий — и это НОРМА: пост в
+               * канале ещё не вышел. Без этой подписи «ноль» читается как поломка модуля,
+               * и человек идёт искать несуществующую ошибку.
+               */
+              <p className="mt-2 text-xs text-white/40">
+                Первый заход в канал только запоминает последний пост и ничего не пишет —
+                дальше комментируются посты, вышедшие после этого момента.
+                <span className="mt-1 block text-white/50">
+                  Пока новых постов нет, задача ждёт и проверяет канал раз в 5–30 минут.
+                  Ноль действий в этом режиме — не ошибка: значит, в канале ещё ничего не выходило.
+                </span>
+              </p>
+            )}
+            {/* Поле нужно только там, где глубина вообще имеет значение: при «только
+                последний» и в мониторинге берётся ровно один пост (правка 19.08). */}
+            {(g(0) === 2 || g(0) === 3) && (
+              <>
+                <div className="mt-3" />
+                <NumberField label="Сколько последних постов обрабатывать" value={postWindow} onChange={(n) => setPostWindow(Math.max(1, Math.min(50, n)))} min={1} max={50} suffix="1–50" />
+                <div className="mt-1 text-xs text-white/40">Сколько последних постов обрабатывать, не всю историю</div>
+              </>
+            )}
+            <div className="mt-3 mb-1 text-xs text-white/50">Стоп-слова <span className="text-white/30">(пропускать посты с этими словами; несколько — через точку с запятой «;»)</span></div>
+            <input value={stopWordsText} onChange={(e) => setStopWordsText(e.target.value)} className="input h-9" placeholder="политика; скам; крипта…" />
+            {/* §3.2 (UI-006): «Семантический фильтр к цели» / «Релевантность поста к цели» удалены по ТЗ 06.08. */}
+            {/* §10.5: анализ картинок в посте — vision опишет фото, коммент будет по сути
+                изображения, а не по «[медиа]». Расход дороже: наценка «картинка ×N» из админки. */}
+            <label className="mt-2 flex items-center gap-2 text-xs text-white/60">
+              <input type="checkbox" checked={analyzeImages} onChange={(e) => setAnalyzeImages(e.target.checked)} className="h-4 w-4 rounded border-line accent-spark-500" />
+              Анализировать картинки в посте <span className="text-white/30">(vision опишет фото; расход ×N за изображение, нужен OPENAI_API_KEY)</span>
+            </label>
+          </div>
+        )}
+        {/* Вероятность — это «сколько из подходящих реально прокомментируем», то есть
+            объём, а не темп: место ей в лимитах, рядом с «сколько сделает аккаунт»
+            (правка 19.08). */}
+        {(cfg.probabilitySlider || cfg.reactionSettings) && !running && (
+          <div className="mb-3 rounded-2xl border border-line bg-elevated/40 p-3">
+            <div className="mb-1 flex justify-between text-sm text-muted">
+              <span>{cfg.probabilitySlider?.label ?? cfg.reactionSettings?.probability.label ?? 'Вероятность'}</span>
+              <span className="text-spark-300">{probability}%</span>
+            </div>
+            <input type="range" min={0} max={100} value={probability} onChange={(e) => setProbability(Number(e.target.value))} className="w-full accent-spark-500" />
+            {/* Защита режет вероятность сверху (server/lib/protection.js#effectiveProbability):
+                осторожный — не выше 25%, сбалансированный — не выше 45%. Раньше об этом
+                не говорилось нигде: оператор ставил 100%, а в логах видел пропуски и считал,
+                что настройка не работает (прогон 19.08). */}
+            {aiProtect && probability > PROTECTION_CAP[protLevel] && (
+              <p className="mt-1.5 text-[11px] text-amber-300">
+                Защита ограничивает: фактически будет <b>{PROTECTION_CAP[protLevel]}%</b>.
+                Снять потолок — уровнем защиты ниже.
+              </p>
+            )}
+            {/*
+              Уровень защиты — НАСТОЯЩИЙ переключатель, а не подсказка.
+              До 25.08 его в форме не было вовсе: `protectionLevel` был зашит единицей и
+              менялся только применением шаблона. При этом надпись выше советовала «выберите
+              Агрессивный», и оператор выбирал одноимённый пресет ЗАДЕРЖЕК — он про другое,
+              потолок вероятности от него не двигался, и плашка не исчезала (жалоба
+              владельца 25.08). Поэтому здесь названия с числами: два ряда карточек с
+              одинаковыми словами и разным смыслом — и есть причина той путаницы.
+            */}
+            <div className="mt-2.5">
+              <ProtectionLevelPicker value={protLevel} onChange={setProtLevel} />
+            </div>
+          </div>
+        )}
+        {hasLimits && (
+          <TimingSection
+            bare
+            part="limits"
+            workModeOptions={workGroup?.options}
+            workMode={g(1)}
+            onWorkMode={(v) => setTg(1, v)}
+            workModeLabel={workGroup?.label}
+            durationMinutes={durationMinutes}
+            onDuration={setDurationMinutes}
+            showDurationAlways={!!cfg.reactionSettings}
+            durationPeriodHint={`Период работы: ${durationPeriodMin}–${durationMinutes} мин`}
+            totalLabel={cfg.reactionSettings?.max.label ?? cfg.workModeFields?.maxLabel ?? 'Всего действий'}
+            computedTotal={{ value: maxActions, accounts: accCount }}
+            targetsCount={targets.length + postUrls.length}
+            perAccount={{ min: minPerAcc, max: maxPerAcc, onMin: setMinPerAcc, onMax: setMaxPerAcc }}
+            minWords={cfg.workModeFields?.minWords ? { value: minWords, onChange: setMinWords } : null}
+            delays={delays}
+            onDelays={(updater) => setDelays(updater)}
+          />
+        )}
+      </SectionCard>
+      </div>
+      )}
+
+      {/* Промпты — ВЫШЕ защиты и таймингов (правка 19.08): сначала «что напишет»,
+          потом «насколько осторожно». Порядок читается как разговор: кому пишем →
+          что пишем → как аккуратно. */}
+      {showBlock('templates') && cfg.messagePrompts && (
+        <SectionCard icon={<Sparkles size={18} />} title="AI / промпты">
+          <div className="space-y-3">
+            <AiGenerationNotice />
+            <GlobalPromptEditor />
+            <PromptCards
+            labels={cfg.messagePrompts}
+            activeIndex={activePrompt}
+            onActiveChange={setActivePrompt}
+            bodies={promptBodies}
+            onSaveCard={savePromptCard}
+          />
+            {/* Распределение типов — часть промптов, а не лимитов (правка 19.08):
+                проценты делятся между теми самыми карточками промптов, что выше.
+                В «Параметрах и лимитах» блок стоял вдали от того, чем управляет. */}
+          {/* Объём задачи: режим работы, сколько сделает аккаунт, минимум слов. Раньше это
+            жило внутри «Таймингов» вместе с задержками — то есть «сколько» и «как быстро»
+            стояли в одной куче (правка 19.08). */}
+        {/* Распределение типов — везде, где есть карточки промптов (правка 19.08).
+            Раньше блок жил только у нейрокомментинга, хотя набор промптов такой же у
+            чаттинга, диалогов и мейлинга — там молча работал один и тот же тип. */}
+        {showBlock('templates') && !running && (cfg.messagePrompts?.length ?? 0) > 0 && (
+            <div className="mb-3 rounded-2xl border border-line bg-elevated/40 p-3">
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                <span className="text-sm font-semibold text-fg">Распределение типов</span>
+                <div className="flex items-center gap-2">
+                  <span className={`rounded-md px-2 py-0.5 text-xs font-bold ${weightSum === 100 ? 'bg-spark-500/15 text-spark-300' : weightSum > 100 ? 'bg-rose-500/15 text-rose-300' : 'bg-amber-500/15 text-amber-300'}`}>
+                    сумма {weightSum}%
+                  </span>
+                  {weightSum !== 100 && (
+                    <button type="button" onClick={() => balanceTypeWeights()} className="rounded-md border border-line px-2 py-0.5 text-[11px] font-semibold text-spark-300 hover:bg-elevated">поровну</button>
+                  )}
+                </div>
+              </div>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {(cfg.messagePrompts ?? []).map((label, i) => {
+                  const val = typeWeights[i] ?? 0
+                  const share = weightSum > 0 ? Math.round((val / weightSum) * 100) : 0
+                  const locked = !!lockedWeights[i]
+                  const count = cfg.messagePrompts?.length ?? 0
+                  return (
+                    <div key={i} className="rounded-xl border border-line bg-surface/40 p-2">
+                      <div className="mb-1.5 flex items-center gap-2">
+                        <span className="min-w-0 flex-1 truncate text-xs font-medium text-fg">{label}</span>
+                        {/* §13 (MR-61): замок закрепляет значение — при изменении других оно не
+                            трогается; редактировать закреплённое можно, сняв замок. */}
+                        <button type="button" onClick={() => toggleWeightLock(i)}
+                          title={locked ? 'Открепить значение' : 'Закрепить: не менять при перераспределении'}
+                          className={cn('grid h-7 w-7 shrink-0 place-items-center rounded-md border', locked ? 'border-spark-500/50 bg-spark-500/10 text-spark-300' : 'border-line text-white/40 hover:text-white/70')}>
+                          {locked ? <Lock size={13} /> : <LockOpen size={13} />}
+                        </button>
+                        {/* §13 (MR-60/61): ввод незакреплённого значения авто-перераспределяет
+                            остаток между другими незакреплёнными; сумма всегда ≤ 100%. */}
+                        <div className="flex shrink-0 items-center gap-1">
+                          <input
+                            type="number" min={0} max={100} inputMode="numeric" disabled={locked}
+                            className="input h-7 w-16 text-center text-sm [appearance:textfield] disabled:opacity-50 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                            value={val}
+                            // Клик по полю выделяет значение целиком: иначе ввод дописывался
+                            // к нулю и получалось «012», «055» вместо «12», «55».
+                            onFocus={(e) => e.currentTarget.select()}
+                            onChange={(e) => {
+                              // Срезаем ведущие нули — «07» это 7, а не 07.
+                              const n = Number(e.target.value.replace(/^0+(?=\d)/, '')) || 0
+                              setTypeWeights((w) => {
+                                const base = w.length === count ? w : equalize(count)
+                                // §13 (уточнение): сохраняем залоченные И ранее введённые (touched) поля;
+                                // остаток делят только НЕтронутые незалоченные.
+                                const pinned = base.map((_, j) => j !== i && (!!lockedWeights[j] || !!touchedWeights[j]))
+                                return redistribute(base, i, n, pinned)
+                              })
+                              // §13: это поле теперь «тронуто» — при следующих правках его не перезапишем.
+                              setTouchedWeights((t) => { const nt = [...t]; nt[i] = true; return nt })
+                            }} />
+                          <span className="text-[11px] text-white/40">%</span>
+                        </div>
+                      </div>
+                      <div className="h-1.5 overflow-hidden rounded-full bg-line"><div className={cn('h-full rounded-full transition-all', locked ? 'bg-spark-400' : 'bg-spark-500')} style={{ width: `${share}%` }} /></div>
+                    </div>
+                  )
+                })}
+              </div>
+              <p className="mt-2 text-[11px] text-white/40">Ввод значения авто-раскидывает остаток по незакреплённым (§13). Замок — закрепить долю. «Поровну» — поделить незакреплённые одинаково.</p>
+            </div>
+          )}
+          </div>
+        </SectionCard>
+      )}
+
+      {showBlock('templates') && cfg.reactionPalette && (
         <SectionCard icon={<Heart size={18} />} title="Эмодзи">
           <div className="flex flex-wrap gap-2">
             {cfg.reactionPalette.map((e) => (
@@ -382,54 +943,200 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
         </SectionCard>
       )}
 
-      {cfg.messagePrompts && (
-        <SectionCard icon={<Sparkles size={18} />} title="AI / промпты">
-          <div className="space-y-3">
-            <AiGenerationNotice />
-            <GlobalPromptEditor />
-            <PromptCards
-            moduleKey={moduleKey}
-            labels={cfg.messagePrompts}
-            activeIndex={activePrompt}
-            onActiveChange={setActivePrompt}
-            onBodiesChange={setPromptBodies}
+      {/* Правка 14.08: для ПРОГРЕВА блок «Защита» не показываем — он дублировал «Уровень
+          прогрева» (уровень уже задаёт безопасный темп и множитель пауз). Базовая защита
+          (FloodWait→пауза→карантин) работает на бэкенде и без UI-блока. QA §8, вариант а. */}
+      {showBlock('settings') && !cfg.warmingLayout && (cfg.aiProtection || cfg.richLayout || cfg.lookingLayout || isGgr) && (
+        <div id="sec-settings" className="scroll-mt-24">
+        {/* Тот же компонент, что в мейлинге, автопостинге, нейродиалогах и парсерах:
+            один вид и один порядок полей во всех модулях (правка 19.08). */}
+        <ProtectionTimings
+          badge={targets.length ? `${targets.length} целей` : undefined}
+        >
+          {/* Пресеты темпа и «Расширенные настройки» — первым делом в блоке. */}
+          {!isParser && !isGgr && !cfg.warmingLayout && (
+          <TimingSection
+            bare
+            part="delays"
+            workModeOptions={workGroup?.options}
+            workMode={g(1)}
+            onWorkMode={(v) => setTg(1, v)}
+            workModeLabel={workGroup?.label}
+            durationMinutes={durationMinutes}
+            onDuration={setDurationMinutes}
+            showDurationAlways={!!cfg.reactionSettings}
+            durationPeriodHint={`Период работы: ${durationPeriodMin}–${durationMinutes} мин`}
+            totalLabel={cfg.reactionSettings?.max.label ?? cfg.workModeFields?.maxLabel ?? 'Всего действий'}
+            computedTotal={{ value: maxActions, accounts: accCount }}
+            targetsCount={targets.length + postUrls.length}
+            perAccount={{ min: minPerAcc, max: maxPerAcc, onMin: setMinPerAcc, onMax: setMaxPerAcc }}
+            minWords={cfg.workModeFields?.minWords ? { value: minWords, onChange: setMinWords } : null}
+            delays={delays}
+            onDelays={(updater) => setDelays(updater)}
+            showComment={commentPrimary}
+            showAction={!commentPrimary}
+            showJoin
+            labels={{ action: cfg.reactionSettings ? 'Задержка между реакциями' : 'Задержка действия', join: 'Задержка вступления' }}
+            delayPresets={cfg.delayPresets ?? ['Агрессивный', 'Сбалансированный', 'Консервативный']}
+            delayPreset={delayPreset}
+            onDelayPreset={setDelayPreset}
           />
-          </div>
-        </SectionCard>
+          )}
+
+          {/* MR-251: галочка уведомлений переехала в панель запуска — она про задачу,
+              а не про защиту или прогрев. */}
+
+          {/* Правка 14.08: дубль «Уровень прогрева» здесь убран — он рендерился и в этом блоке,
+              и отдельным блоком ниже. Оставлен один отдельный блок «Уровень прогрева». */}
+
+          {/*
+            Здесь раньше рисовалась группа toggleGroups[0]. У нейрокомментинга отбор постов
+            уехал в «Параметры и лимиты» (19.08), у массовых реакций режим — туда же (26.08),
+            а у нейрочатинга «Режим реакции» удалён как несуществующий: воркер о нём не знал.
+            Осталось два случая — парсеры и модули с одной группой настроек.
+          */}
+          {isParser ? (
+            <div className="space-y-3">
+              <label className="label">Ключевые слова / источник</label>
+              <textarea value={keywords} onChange={(e) => setKeywords(e.target.value)} rows={2} className="input resize-none text-sm" />
+              <NumberField label="Лимит результатов" value={maxActions} onChange={setMaxActions} />
+            </div>
+          ) : isGgr ? (
+            <div className="space-y-3 text-sm text-muted">
+              <p>
+                Проверка идёт по <b className="text-fg">выбранным аккаунтам</b> (выберите их выше): подключаем сессию,
+                запрашиваем профиль и складываем балл. Настройки не требуются — жмите «{cfg.primaryAction ?? 'Проверить'}».
+              </p>
+              <div className="grid gap-2 sm:grid-cols-3">
+                {[
+                  ['Живая сессия', '+50'],
+                  ['Есть @username', '+15'],
+                  ['Привязан телефон', '+10'],
+                ].map(([label, pts]) => (
+                  <div key={label} className="flex items-center justify-between rounded-xl border border-line bg-elevated/40 px-3 py-2">
+                    <span className="text-xs text-muted">{label}</span>
+                    <span className="text-sm font-bold text-iris-300">{pts}</span>
+                  </div>
+                ))}
+              </div>
+              <p className="text-xs">
+                Валидный аккаунт получает статус «активный» и сохранённый балл. Мёртвая сессия — 0 и «разавторизирован».
+                Сетевые ошибки и таймауты не понижают балл, аккаунты в карантине и спамблоке проверка не «лечит».
+                Занятые другим модулем аккаунты пропускаются.
+              </p>
+            </div>
+          ) : (
+            <p className="text-sm text-muted">{cfg.warmingLayout
+              ? 'Темп и паузы задаёт «Уровень прогрева» — отдельная секция ниже.'
+              : 'Лимиты и задержки — ниже в этом же блоке.'}</p>
+          )}
+        </ProtectionTimings>
+        </div>
       )}
 
-      <SectionCard icon={<Play size={18} />} title={running ? 'Выполнение' : 'Запуск'} badge={running ? 'LIVE' : undefined}>
-        <LaunchPanel
-          running={running}
-          starting={starting}
-          canStart={canStart}
-          onStart={handleStart}
-          onStop={stop}
-          onSave={handleSave}
-          primaryLabel={cfg.primaryAction ?? 'Начать'}
-          stats={launchStats}
-          task={task}
-          warn={warn}
-          presets={presets}
-          onApplyPreset={applyPreset}
-          onDeletePreset={deletePreset}
-        />
-        <div className="mt-4 flex flex-wrap items-center gap-3">
-          <Segmented options={['Визуал', 'Логи']} value={viewTab} onChange={setViewTab} size="sm" />
-          {viewTab === 0 && (
-            <div className="inline-flex rounded-lg border border-line bg-elevated p-0.5">
-              <button type="button" onClick={() => setHistoryGrid(false)} className={`rounded p-1.5 ${!historyGrid ? 'bg-surface text-fg' : 'text-muted'}`}><List size={15} /></button>
-              <button type="button" onClick={() => setHistoryGrid(true)} className={`rounded p-1.5 ${historyGrid ? 'bg-surface text-fg' : 'text-muted'}`}><LayoutGrid size={15} /></button>
-            </div>
-          )}
-        </div>
-      </SectionCard>
 
-      {viewTab === 1 ? (
-        <LogsPanel logs={logs} emptyText={cfg.logEmpty ?? 'Логов пока нет'} title="Логи выполнения" live={running} />
-      ) : (
-        <SectionCard icon={<MessageCircle size={18} />} title={isParser || isGgr ? 'Результаты' : 'История'} badge={String(isParser || isGgr ? results.length : history.length)}>
-          {(isParser || isGgr) && results.length > 0 ? (
+
+      {/* §3.5: «Уровень прогрева» — ОТДЕЛЬНЫЙ блок (как «Тайминги и задержки»), а не
+          строчка внутри «Параметры и лимиты»: это главный выбор прогрева, ему нужен свой
+          заголовок. Показываем только для warming-модуля и не во время выполнения. */}
+      {cfg.warmingLayout && !running && (
+        <div id="sec-warm" className="scroll-mt-24">
+        <SectionCard icon={<Flame size={18} />} title="Уровень прогрева">
+          <div className="mb-1.5 text-xs text-white/40">Реже действия = естественнее</div>
+          <Segmented options={WARM_LEVELS} value={warmLevel} onChange={setWarmLevel} />
+
+          {/*
+            Срок прогрева (вопрос владельца 27.08: «прогрев исполнился за пару часов, хотя
+            минимальный прогрев у нас 2 дня, и сколько там действий вообще?»).
+            Раньше задача считала цель жребием из диапазона действий и могла закончиться
+            к обеду. Теперь человек задаёт СРОК, а число действий выводится из темпа —
+            и то, и другое видно тут же, без догадок.
+          */}
+          <div className="mt-3">
+            <div className="mb-1.5 text-xs text-white/60">Сколько дней греем</div>
+            <Segmented
+              options={['2 дня', '3 дня', '7 дней', '14 дней']}
+              value={[2, 3, 7, 14].indexOf(warmDays) === -1 ? 0 : [2, 3, 7, 14].indexOf(warmDays)}
+              onChange={(i) => setWarmDays([2, 3, 7, 14][i])}
+            />
+          </div>
+
+          {/*
+            Окно активности (просьба владельца 27.08: «добавить выбор — 6 часов прогрева
+            каждый день, 8 или 12; в них распределяются действия одного аккаунта»).
+            Окно решает не сколько действий, а насколько они растянуты: одни и те же
+            20 действий за 6 часов идут раз в 18 минут, за 12 — раз в 36. Узкое окно
+            похоже на человека, который заходит вечером, широкое — на того, кто весь
+            день в телефоне.
+          */}
+          <div className="mt-3">
+            <div className="mb-1.5 text-xs text-white/60">Сколько часов в сутки аккаунт активен</div>
+            <Segmented
+              options={['6 часов', '8 часов', '12 часов', '14 часов']}
+              value={[6, 8, 12, 14].indexOf(warmHours) === -1 ? 1 : [6, 8, 12, 14].indexOf(warmHours)}
+              onChange={(i) => setWarmHours([6, 8, 12, 14][i])}
+            />
+          </div>
+
+          {/*
+            Итог одной строкой — вместо карточки лимитов, где числа расходились. Считаем то
+            же, что и воркер: суточная норма уровня × дни, шаг = окно / норму.
+          */}
+          <div className="mt-3 rounded-xl border border-spark-500/25 bg-spark-500/8 px-3 py-2.5 text-xs leading-relaxed text-white/70">
+            {/*
+              Умножение пишем ЦЕЛИКОМ (правка 27.08: «здесь пишет 40 действий в день, а
+              сбоку — за всё время»). Два числа «40» рядом — суточная норма быстрого уровня
+              и итог за два дня нормального — читались как одно и то же, и казалось, что
+              витрина противоречит сама себе. Формула снимает вопрос без пересчёта в уме.
+            */}
+            <b className="text-fg">
+              {[40, 20, 10][warmLevel]} действий в день × {warmDays}{' '}
+              {warmDays === 1 ? 'день' : warmDays < 5 ? 'дня' : 'дней'} = {warmDays * [40, 20, 10][warmLevel]} действий на аккаунт
+            </b>{' '}
+            за всё время. Внутри дня — примерно раз в{' '}
+            {Math.round((warmHours * 60) / [40, 20, 10][warmLevel])} мин в течение {warmHours} активных часов, ночью пауза.
+            {selected.size > 1 && <> Всего по задаче: {warmDays * [40, 20, 10][warmLevel] * selected.size} действий на {selected.size} аккаунтов.</>}
+          </div>
+
+          {/*
+            Что именно делает прогрев. Раньше об этом не было сказано нигде: человек
+            запускал модуль и по логам угадывал, чем заняты его профили.
+          */}
+          <div className="mt-2 rounded-xl border border-line bg-elevated/40 px-3 py-2.5">
+            <div className="mb-1.5 text-xs font-semibold text-fg">Что аккаунт делает в это время</div>
+            <ul className="space-y-1 text-[11px] leading-snug text-white/55">
+              <li>· <b className="text-white/75">Смотрит каналы</b> — открывает и листает 2–7 последних постов (30%)</li>
+              <li>· <b className="text-white/75">Ставит реакции</b> — на случайный пост из последних десяти (20%)</li>
+              <li>· <b className="text-white/75">Читает диалоги</b> — заходит в список переписок (15%)</li>
+              <li>· <b className="text-white/75">Вступает в каналы</b> — с паузой перед входом, как человек (12%)</li>
+              <li>· <b className="text-white/75">Отписывается</b> — от того, куда вступил в этой же задаче (8%)</li>
+              <li>· <b className="text-white/75">Пишет себе в «Избранное»</b> — короткую заметку (5%)</li>
+              <li>· <b className="text-white/75">Просто заходит</b> — держит сессию живой (10%)</li>
+            </ul>
+            <div className="mt-1.5 text-[11px] leading-snug text-white/35">
+              Каналы берутся из вашей базы (той, что наполняет парсер), и только если она пуста — поиском по темам.
+              Так профиль греется на своей тематике, а не на случайном шуме.
+            </div>
+          </div>
+          <div className="mt-3 rounded-lg border border-line/60 bg-elevated/40 px-3 py-2 text-[11px] text-white/50">
+            💡 <b className="text-white/70">Уровень</b> — темп: сколько действий аккаунт делает в сутки (~40 / 20 / 10) и насколько
+            длинные паузы между ними. <b className="text-white/70">Дни</b> — сколько задача проработает. Ночью прогрев спит,
+            днём действия расходятся по часам, поэтому за сутки выходит примерно заявленное число, а не всё подряд за вечер.
+          </div>
+          {/* Правка 14.08: блок «Защита» у прогрева убран (дублировал уровень) — галочку
+              уведомлений перенесли сюда. */}
+          {/* MR-251: галочка уведомлений переехала в панель запуска — она про задачу,
+              а не про защиту или прогрев. */}
+        </SectionCard>
+        </div>
+      )}
+
+
+      {/* §7: блок «История сообщений» убран. Результаты остаются только для парсера/проверки (GGR) —
+          там это фактический вывод задачи. Логи выполнения — в Дашборде задач (ссылка выше). */}
+      {(isParser || isGgr) && (showBlock('results') || showBlock('logs')) && (
+        <SectionCard icon={<MessageCircle size={18} />} title="Результаты" badge={String(results.length)}>
+          {results.length > 0 ? (
             <div className="max-h-80 overflow-y-auto">
               <table className="w-full text-sm">
                 <thead><tr className="border-b border-line text-left text-xs text-muted"><th className="py-2">Имя</th><th>Детали</th><th>Статус</th></tr></thead>
@@ -444,30 +1151,148 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
                 </tbody>
               </table>
             </div>
-          ) : history.length > 0 ? (
-            historyGrid ? (
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                {history.map((h, i) => (
-                  <div key={i} className="rounded-xl border border-line bg-elevated/40 p-3 text-sm">
-                    <div className="text-xs text-muted">{String(h.accountName ?? '')} · @{String(h.channel ?? h.target ?? '')}</div>
-                    <p className="mt-1 text-fg">{String(h.comment ?? h.text ?? h.emoji ?? '')}</p>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <ul className="space-y-2">{history.map((h, i) => (
-                <li key={i} className="rounded-xl border border-line bg-elevated/40 p-3 text-sm text-fg">{String(h.comment ?? h.text ?? JSON.stringify(h))}</li>
-              ))}</ul>
-            )
           ) : (
-            <EmptyState icon={<Eye size={22} />} title="Пока пусто" desc={`Действий: ${progressDone}. Запустите модуль.`} />
+            <EmptyState icon={<Eye size={22} />} title="Пока пусто" desc={`Действий: ${progressDone}. Запустите проверку.`} />
           )}
         </SectionCard>
       )}
 
-      {(cfg.blacklistSection || cfg.blacklistEmpty) && (
-        <BlacklistEditor title={cfg.blacklistSection ?? 'Чёрный список каналов'} />
+      {!(['run', 'settings', 'targets', 'templates', 'results', 'logs'] as const).some(showBlock) && (
+        <div className="rounded-2xl border border-line bg-elevated/40 p-6 text-center text-sm text-muted">
+          Роли выдан доступ к модулю, но не выдан ни один блок. Обратитесь к администратору, чтобы он открыл нужные блоки в «Роли и доступы».
+        </div>
       )}
+
+      {/* Статус задачи со страницы модуля УБРАН (правка 19.08). Модуль — это форма
+          запуска: настроил и нажал. Всё, что происходит после запуска — прогресс,
+          «Завершено», логи, стоп и пауза — живёт в Дашборде задач, и держать вторую
+          витрину статуса значило показывать одно и то же в двух местах и чинить
+          рассинхрон между ними. Ссылка на задачи модуля осталась в панели запуска. */}
+      {/* Плавающая панель запуска — ПОСЛЕДНИЙ элемент страницы: её заглушка
+          резервирует место внизу, и бар «отрывается» ко дну экрана. Подними её
+          выше — заглушка встанет в середину, а бар задвоится.  */}
+      {/* §10 (MR-49): выбор кампании и цели убран из модулей — эти разделы скрыты
+          из меню, и держать их выбор здесь было некуда. Задача запускается сама по
+          себе; привязка к кампании/цели приходит из настроек кампании при запуске
+          через неё (buildCampaignPlan прокидывает campaignId и goalId в settings).
+          Состояние campaignId/goalId оставлено: оно всё ещё уходит в задачу. */}
+      {showBlock('run') && (() => {
+        // Панель запуска одна на все модули. Разница только в оформлении: там, где
+        // карточка «Параметры и лимиты» уже показана выше (нейрокомментинг), панель
+        // идёт голой; где своих параметров нет (прогрев, масслукинг и др.) — она
+        // оформляется той же карточкой, как было до переноса 19.08.
+        const panel = (
+          <LaunchPanel
+            notify={{ on: notifyStatus, onChange: setNotifyStatus }}
+            running={running}
+            starting={starting}
+            canStart={canStart}
+            onStart={handleStart}
+            onStop={stop}
+            onSave={handleSave}
+            primaryLabel={cfg.primaryAction ?? 'Начать'}
+            cost={<LaunchCost compact moduleKey={moduleKey} actions={maxActions} accounts={selected.size}
+              delaySec={(() => { const m = delayMultiplier(protLevel, delayPreset, globalPace); const d = primaryDelay; return d ? [Math.round(d[0] * m), Math.round(d[1] * m)] as [number, number] : d })()}
+              joinSec={(() => { const m = delayMultiplier(protLevel, delayPreset, globalPace); const d = delays.join; return d ? [Math.round(d[0] * m), Math.round(d[1] * m)] as [number, number] : undefined })()}
+              targets={targets.length + postUrls.length} />}
+            stats={launchStats}
+            task={task}
+            warn={warn}
+            // Кнопка серая — прямо в панели говорим, ЧТО именно осталось заполнить,
+            // а не только баннером выше по странице (правка заказчика).
+            blockedBy={!running && !canStart
+              ? (goalExpired ? ['дедлайн цели истёк — продлите или уберите цель']
+                : typesOver100 ? [`сумма типов ${weightSum}% > 100 — уменьшите`]
+                  : missingRequired)
+              : []}
+            // §11 (MR-55): шаги запуска — компактной строкой ПОД кнопкой запуска (а не
+            // большим блоком вверху страницы): всё видно сразу, без прокрутки.
+            steps={!running ? <LaunchSteps steps={launchSteps} /> : null}
+            presets={presets}
+            onApplyPreset={applyPreset}
+            extras={(
+              <>
+                {/* §6: автоматизация прямо в модуле — запуск по времени, одно-/многоразово.
+                    Идёт в extras (перед плавающим баром), иначе рендерился бы под баром внизу экрана. */}
+                {!running && (
+                  <div className="mt-3 rounded-xl border border-line bg-elevated/30">
+                    <button type="button" onClick={() => setSchedOpen((v) => !v)}
+                      className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-semibold text-muted hover:text-fg">
+                      <Clock size={15} className="text-iris-300" />
+                      Запуск по расписанию
+                      <span className="text-xs font-normal text-faint">— создать правило, не запуская сейчас</span>
+                      <span className="ml-auto text-xs text-faint">{schedOpen ? 'скрыть ▲' : 'настроить ▾'}</span>
+                    </button>
+                    {schedOpen && (
+                      <div className="space-y-3 border-t border-line px-3 pb-3 pt-3">
+                        <Segmented options={['Однократно', 'Ежедневно', 'Каждые N минут']} value={schedMode} onChange={setSchedMode} size="sm" />
+                        {schedMode === 0 && (
+                          <div>
+                            <div className="mb-1 text-xs text-white/50">Дата и время запуска</div>
+                            <input type="datetime-local" className="input h-9" value={schedAt} onChange={(e) => setSchedAt(e.target.value)} />
+                          </div>
+                        )}
+                        {schedMode === 1 && (
+                          <div>
+                            <div className="mb-1 text-xs text-white/50">Время ежедневного запуска</div>
+                            <input type="time" className="input h-9 w-32" value={schedTime} onChange={(e) => setSchedTime(e.target.value)} />
+                          </div>
+                        )}
+                        {schedMode === 2 && (
+                          <div>
+                            <div className="mb-1 text-xs text-white/50">Интервал (минуты)</div>
+                            <input type="number" min={1} className="input h-9 w-32" value={schedEvery} onChange={(e) => setSchedEvery(Math.max(1, Number(e.target.value) || 1))} />
+                          </div>
+                        )}
+                        <p className="text-[11px] text-white/40">
+                          Правило заберёт текущие настройки модуля{campaignId ? ' и кампанию' : ''}. Управление — в разделе «Автоматизация».
+                        </p>
+                        <button type="button" onClick={() => void createSchedule()} disabled={schedSaving || !canStart}
+                          className="btn-ghost h-9 text-sm disabled:opacity-40">
+                          <Clock size={14} /> {schedSaving ? 'Создание…' : 'Создать правило'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+  
+                <div className="mt-4 flex flex-wrap items-center gap-3">
+                  <a href={`/panel/tasks?module=${moduleKey}${task ? `&task=${task.id}` : ''}`} className="ml-auto inline-flex items-center gap-1 text-xs font-semibold text-spark-300 hover:underline" title="Открыть Дашборд задач, отфильтрованный по этому модулю">
+                    <Terminal size={13} /> Логи выполнения — в Дашборде задач <ArrowUpRight size={13} />
+                  </a>
+                </div>
+              </>
+            )}
+          />
+        )
+        if (hasParamsCard) return panel
+        /*
+         * У прогрева карточки «Параметры и лимиты» нет вовсе (правка 27.08). Здесь она
+         * была пустой обёрткой с фразой «темп задаёт секция выше» — то есть вторым
+         * заголовком про параметры, которых в ней нет. Всё, что можно настроить, живёт в
+         * блоке «Уровень прогрева»; сюда попадала только панель запуска.
+         */
+        if (cfg.warmingLayout) return (
+          <div id="sec-run" className="scroll-mt-24">
+            {limitWarn && !running && (
+              <div className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">⚠ {limitWarn}</div>
+            )}
+            {panel}
+          </div>
+        )
+        return (
+          <div id="sec-run" className="scroll-mt-24">
+          <SectionCard icon={<Play size={18} />} title="Параметры и лимиты">
+          {limitWarn && !running && (
+            <div className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">⚠ {limitWarn}</div>
+          )}
+          <p className="mb-3 text-sm text-muted">Лимиты и задержки — в блоке «Защита и тайминги» выше.</p>
+            {panel}
+          </SectionCard>
+          </div>
+        )
+      })()}
+
     </div>
   )
 }

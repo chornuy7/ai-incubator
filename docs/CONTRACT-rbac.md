@@ -1,0 +1,110 @@
+# CONTRACT · RBAC (роли и доступы)
+
+> Контракт §8.1. Источник истины кода — `server/roles.js` (модель + `can()` — чистая
+> функция, покрыта юнит-тестами), `server/rolesRoutes.js` (API), `src/pages/RolesPage.tsx`
+> (страница админа). Разблокировано решением заказчика 14.07 (см. ниже).
+
+## 1. Модель
+
+Главный админ создаёт роли и раздаёт каждой доступ к:
+- **модулям** (12 модулей платформы);
+- **блокам внутри модуля** (единый словарь: запуск, настройки, цели, шаблоны, результаты, логи);
+- **ресурсам**: папки целей (по элементам), целевые каналы (по элементам),
+  таймеры/планировщик (тип целиком), шаблоны поиска (тип целиком).
+
+Каждый доступ — `allow | deny` («2 чекбокса»: дать / убрать доступ). **По умолчанию `deny`**
+(нет доступа). В UI строки со снятым доступом подсвечиваются (§8.1 «выделить, если убрал»).
+
+```jsonc
+Role {
+  id, name, builtin, isTemplate, createdAt, updatedAt,
+  permissions: {
+    modules:  { [moduleKey]: 'allow'|'deny' },
+    blocks:   { [`${moduleKey}:${blockKey}`]: 'allow'|'deny' },
+    resources: {
+      folders:  { [folderId]: 'allow'|'deny' },
+      channels: { [channelId]: 'allow'|'deny' },
+      timers:          'allow'|'deny',
+      searchTemplates: 'allow'|'deny'
+    }
+  }
+}
+```
+
+Блоки (`BLOCKS`): `run, settings, targets, templates, results, logs`.
+Типы ресурсов (`RESOURCE_TYPES`): `folders, channels` (perItem) + `timers, searchTemplates`.
+
+## 2. Встроенные роли
+
+- **Администратор** (`role_admin`, `builtin`) — обходит все проверки (`can()` всегда `true`).
+  Права не редактируются (менять нечего), удалить нельзя; переименовать можно.
+- **Модератор** (`isTemplate`) — стартовый шаблон: доступ к рабочим модулям
+  (нейрокомментинг/чаттинг/реакции/масслукинг: `run/results/logs`), без парсеров и настроек.
+  Админ может копировать/менять его под нужды.
+
+## 3. Проверка доступа
+
+`can(role, kind, key)` — чистая функция (enforcement + тесты):
+
+- `kind`: `module | block | folder | channel | timers | searchTemplates`;
+- админ (`builtin && id===role_admin`) → `true`;
+- иначе смотрим карту; отсутствующий ключ → `deny` (безопасный дефолт);
+- `role == null` → `false`.
+
+## 4. API (`/api/roles`)
+
+| Метод | Путь | Назначение |
+|---|---|---|
+| GET | `/api/roles` | список ролей (сидит админа+модератора при первом чтении) |
+| GET | `/api/roles/catalog` | каталог грантов: модули×блоки + ресурсы с реальными элементами (папки/каналы из своих стораджей) |
+| GET | `/api/roles/:id` | одна роль |
+| POST | `/api/roles` | создать |
+| PUT | `/api/roles/:id` | обновить имя/шаблон/права (права админа игнорируются) |
+| DELETE | `/api/roles/:id` | удалить (встроенные — нельзя) |
+
+Все мутации пишут аудит (`role.create/update/delete`, см.
+[CONTRACT-audit-log.md](./CONTRACT-audit-log.md)). Хранение — `data/roles.json`
+(env `ROLES_FILE` для тестов).
+
+## 5. Пользователи (`server/users.js`, `/api/users`)
+
+Оператор панели — сущность **User** (не путать с Telegram-«Аккаунтом»):
+`{ id, email, name, roleId, active, passwordHash, createdAt, updatedAt }`. Пароль —
+scrypt-хэш `salt:hash` (`hashPassword`/`verifyPassword`), в открытом виде не хранится и
+наружу не отдаётся (`publicUser`). `POST /api/users/login` возвращает `{ user, role }`
+(роль с правами — для гейтинга UI). Сид: админ + тестовый модератор. Мутации → аудит
+`user.create/update/delete`, входы → `user.login`/`user.login.fail`.
+
+## 6. Enforcement на фронте
+
+- Сессия — `src/features/auth/session.ts` (persist в localStorage: юзер + права роли).
+- `src/shared/lib/access.ts#can()` — зеркало `roles.js#can` (админ bypass, дефолт deny).
+- Сайдбар (`AppSidebar`) скрывает модули без доступа + админ-страницы (`/panel/roles`,
+  `/panel/users`) для не-админов; `ModuleRunner` гейтит прямой заход по URL → «Нет доступа».
+- Управление ролью юзера — `/panel/users` (админ назначает роль, включает/отключает).
+
+## 7. Учёт рабочего времени (`server/workLog.js`)
+
+Сессия труда = вход→выход. `clockIn` при `/login`, `clockOut` при `/logout`; открытая
+сессия учитывается «вживую». `GET /api/users/worktime` → сводка `{ todayMs, weekMs, open,
+since }` по каждому юзеру (показывается на `/panel/users`: «в сети» + сегодня / 7 дней).
+Хранение — `data/worklog.json` (env `WORKLOG_FILE`). Аудит `user.logout`.
+
+## 8. Server-side enforcement (`server/lib/accessGuard.js`)
+
+Гейт доступа к модулю на самих роутах API, а не только в UI. Клиент шлёт заголовок
+`X-User-Id` (id из сессии, `client.ts#authHeaders`); guard на `/api/modules/:key`,
+`/api/neuro-commenting`, `/api/neuro-dialogs` проверяет `can(role,'module',key)` и отдаёт
+**403** при отказе (админ — bypass). Проверено: модератор → `warming` = 403, → разрешённый
+модуль проходит.
+
+**Дев-модель vs продакшн:** сейчас идентификация по `X-User-Id` (нет заголовка → пропуск,
+для демо/админа без сессии). Продакшн-шаг — заменить на подписанный токен сессии
+(cookie/JWT), выдаваемый при `/login`, и убрать «пропуск без заголовка».
+
+## 6. Решение заказчика (14.07)
+
+Матрица прав определена заказчиком (ранее была 🔒 §6): «главный админ раздаёт роли и
+выбирает, какими модулями и блоками в них может пользоваться роль; может создавать новые
+роли и позже менять/забирать/добавлять доступы; у каждой папки/таймера/шаблона/канала —
+свой доступ, 2 чекбокса (дать/убрать), снятый доступ выделяется».

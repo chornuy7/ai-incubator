@@ -1,0 +1,584 @@
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { Network, Plus, Trash2, Pencil, Link2, Check, Circle, Zap, Loader2, MapPin, Upload, Search } from 'lucide-react'
+import { PageHeader, Card, EmptyState, Badge, Select, Modal, Tip} from '@/shared/ui'
+import { HelpButton } from '@/features/neuro-commenting/moduleUi'
+import {
+  fetchProxiesPage, createProxy, updateProxy, deleteProxy, deleteProxies, checkProxy, checkAllProxies,
+  PROXY_KIND_LABELS,
+  type Proxy, type ProxyInput, type ProxyKind, type ProxyGeo, type ProxyCounts,
+  // Тип страницы назван так же, как компонент, — берём под своим именем.
+  type ProxiesPage as ДанныеСтраницы,
+} from '@/api/proxiesApi'
+import { fetchAccounts, patchAccount } from '@/api/accountsApi'
+import type { TgAccount } from '@/shared/types'
+import { FLAGS } from '@/shared/config/geo'
+import { confirmDialog } from '@/shared/lib/dialog'
+import { cn } from '@/shared/lib/utils'
+import { ImportProxiesModal } from '@/features/import-proxies/ImportProxiesModal'
+
+// Для оператора важно одно: годится прокси в работу или нет. Поэтому на плашке — только
+// «Рабочий»/«Нерабочий», а ПОЧЕМУ именно нерабочий (не пускает в Telegram, не тот
+// протокол, хост мёртв) уходит в подсказку: причина нужна при разборе, а не в списке.
+const STATUS_META: Record<Proxy['status'], { label: string; tone: 'spark' | 'rose' | 'amber' | 'muted'; hint?: string }> = {
+  ok: { label: 'Рабочий', tone: 'spark', hint: 'Через прокси открывается интернет И доступны серверы Telegram' },
+  bad: { label: 'Нерабочий', tone: 'rose', hint: 'Порт открыт, но выйти наружу не удалось — обычно помогает сменить схему http ↔ socks5' },
+  dead: { label: 'Нерабочий', tone: 'rose', hint: 'Хост не отвечает' },
+  unknown: { label: 'Не проверен', tone: 'muted' },
+}
+
+/** Подсказка с причиной: главный случай — прокси ходит в интернет, но не пускает в Telegram. */
+function statusMeta(p: Proxy) {
+  const base = STATUS_META[p.status]
+  if (p.status === 'bad' && p.reason === 'no_telegram') {
+    return {
+      ...base,
+      hint: 'Через прокси открывается обычный интернет, но соединение с серверами Telegram не проходит. Для аккаунтов такой прокси бесполезен — замените его.',
+    }
+  }
+  return base
+}
+
+// Пароль в форме — поле только на запись: сервер его не возвращает, поэтому при
+// редактировании оно пустое, а пустое значение прокси не меняет (MR-290).
+const emptyForm = (): ProxyInput => ({ label: '', kind: 'static', scheme: 'socks5', host: '', port: 1080, username: '', password: '', country: '', note: '', status: 'unknown' })
+
+export function ProxiesPage() {
+  /*
+   * СТРАНИЦА, А НЕ ВЕСЬ КАТАЛОГ.
+   *
+   * Здесь рисовались все прокси разом — на боевой базе это сто одна карточка. Теперь
+   * сервер отдаёт ту страницу, которая показана, а фильтр, поиск и счётчики групп
+   * считает база. Форма ответа та же, что у списка аккаунтов.
+   */
+  const [proxies, setProxies] = useState<(Proxy & { usedBy?: number })[]>([])
+  const [pageInfo, setPageInfo] = useState<ДанныеСтраницы['page']>({ number: 1, size: 25, total: 0, pages: 1 })
+  const [counts, setCounts] = useState<ProxyCounts>({ all: 0, ok: 0, broken: 0, unknown: 0 })
+  const [page, setPage] = useState(0)
+  const [pageSize, setPageSize] = useState(25)
+  const [query, setQuery] = useState('')
+  /** Признак «сводка уже приехала»: до неё рисуем прочерк, а не ноль. */
+  const [loaded, setLoaded] = useState(false)
+  // Рабочие / нерабочие / не проверены. «Нерабочие» — это и мёртвые, и те, что не
+  // говорят своим протоколом: и то и другое аккаунту одинаково бесполезно.
+  const [statusFilter, setStatusFilter] = useState<'all' | 'ok' | 'broken' | 'unknown'>('all')
+  /** Список аккаунтов — только для окна «Назначить», и подгружается при его открытии. */
+  const [accounts, setAccounts] = useState<TgAccount[]>([])
+  const [loading, setLoading] = useState(true)
+  const [err, setErr] = useState('')
+  const [editOpen, setEditOpen] = useState(false)
+  const [editing, setEditing] = useState<Proxy | null>(null)
+  const [form, setForm] = useState<ProxyInput>(emptyForm())
+  const [saving, setSaving] = useState(false)
+  const [assignFor, setAssignFor] = useState<Proxy | null>(null)
+  /*
+   * Список аккаунтов подгружается, КОГДА открывают «Назначить», а не при входе на
+   * страницу. Раньше он грузился всегда — ради окна, которое открывают изредка.
+   */
+  useEffect(() => {
+    if (!assignFor || accounts.length) return
+    void fetchAccounts().then(setAccounts).catch(() => {})
+  }, [assignFor, accounts.length])
+  const [detailProxy, setDetailProxy] = useState<Proxy | null>(null)
+  const [geoMap, setGeoMap] = useState<Record<string, ProxyGeo | null>>({})
+  const [geoSrcMap, setGeoSrcMap] = useState<Record<string, 'exit' | 'gateway' | null>>({})
+  const [testing, setTesting] = useState<string | null>(null)
+  const [importOpen, setImportOpen] = useState(false)
+
+  const doTest = async (p: Proxy) => {
+    setTesting(p.id)
+    try {
+      const { proxy, geo, geoSource } = await checkProxy(p.id)
+      setProxies((list) => list.map((x) => (x.id === p.id ? proxy : x)))
+      setGeoMap((m) => ({ ...m, [p.id]: geo }))
+      setGeoSrcMap((m) => ({ ...m, [p.id]: geoSource ?? null }))
+    } catch { setGeoMap((m) => ({ ...m, [p.id]: null })) }
+    finally { setTesting(null) }
+  }
+
+  // silent — фоновое обновление: список не гасим «Загрузкой», иначе экран моргал бы
+  // заглушкой каждые полминуты.
+  async function load(opts?: { silent?: boolean }) {
+    if (!opts?.silent) setLoading(true)
+    try {
+      /*
+       * Аккаунты здесь больше не грузятся.
+       *
+       * Их тянули ради двух вещей: посчитать «занято N» и наполнить окно «Назначить».
+       * Первое сервер присылает вместе со страницей, второе нужно ровно в тот момент,
+       * когда окно открывают. Открытие страницы «Прокси» стоило полного парка.
+       */
+      const п = await fetchProxiesPage({ page: page + 1, pageSize, search: query.trim() || undefined, status: statusFilter })
+      setProxies(п.items); setPageInfo(п.page); setCounts(п.counts); setLoaded(true)
+    } catch (e) { if (!opts?.silent) setErr(e instanceof Error ? e.message : 'Ошибка загрузки') }
+    finally { if (!opts?.silent) setLoading(false) }
+  }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { void load() }, [page, pageSize, statusFilter, query])
+  // Смена фильтра или поиска возвращает на первую страницу: иначе оператор остаётся на
+  // пятой странице набора, в котором теперь две.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { setPage(0) }, [statusFilter, query, pageSize])
+
+  // Автообновление: статусы меняет и фоновый чекер сервера (раз в 30 мин), и ручные
+  // тесты, и живая работа аккаунтов — страница обязана показывать свежее сама.
+  const [autoRefresh, setAutoRefresh] = useState(true)
+  useEffect(() => {
+    if (!autoRefresh) return
+    const id = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
+      void load({ silent: true })
+    }, 30000)
+    return () => clearInterval(id)
+  }, [autoRefresh])
+
+  /** Проверить весь каталог разом — «нерабочие» обновятся без ручного тыка по каждому. */
+  const [checkingAll, setCheckingAll] = useState(false)
+  async function testAll() {
+    setCheckingAll(true)
+    try { await checkAllProxies(); await load({ silent: true }) }
+    catch (e) { setErr(e instanceof Error ? e.message : 'Ошибка проверки') }
+    finally { setCheckingAll(false) }
+  }
+
+  // Счётчики групп и отбор считает база: плитка «Нерабочие» обязана показывать весь
+  // каталог, а не тех, кто попал в текущие двадцать пять строк.
+  const visible = proxies
+
+  const usedBy = useMemo(() => {
+    const m: Record<string, number> = {}
+    // MR-290: считаем по ССЫЛКЕ. Сравнение собранных строк давало ноль занятых, как
+    // только строка подключения у аккаунта пустела, — а именно это и произошло на бою.
+    // Считает сервер: он видит все аккаунты, а страница — только те, что успела загрузить.
+    for (const p of proxies) m[p.id] = Number((p as { usedBy?: number }).usedBy) || 0
+    return m
+  }, [proxies, accounts])
+
+  function openNew() { setEditing(null); setForm(emptyForm()); setEditOpen(true); setErr('') }
+  function openEdit(p: Proxy) { setEditing(p); setForm({ ...p }); setEditOpen(true); setErr('') }
+
+  async function save() {
+    setSaving(true); setErr('')
+    try {
+      let saved: Proxy
+      if (editing) { saved = await updateProxy(editing.id, form); setProxies((prev) => prev.map((x) => (x.id === saved.id ? saved : x))) }
+      else { saved = await createProxy(form); setProxies((prev) => [saved, ...prev]) }
+      setEditOpen(false)
+      void doTest(saved) // авто-определение статуса и страны (выбирать вручную не нужно)
+    } catch (e) { setErr(e instanceof Error ? e.message : 'Ошибка') }
+    finally { setSaving(false) }
+  }
+
+  // Ручная пометка «мёртвый» убрана: статус ставит настоящая проверка (доступность
+  // Telegram через прокси), и нерабочие уже не предлагаются аккаунтам. Кнопка только
+  // путала — два источника правды об одном и том же.
+
+  // ── Массовый выбор и удаление ────────────────────────────────────────────
+  // Каталог на полсотни записей чистить по одной — работа на полчаса; особенно когда
+  // разом померла целая закупка (правка заказчика 12.08).
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const toggleSel = (id: string) => setSelected((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
+  const allVisibleSelected = visible.length > 0 && visible.every((p) => selected.has(p.id))
+  const toggleAllVisible = () => setSelected(allVisibleSelected ? new Set() : new Set(visible.map((p) => p.id)))
+  const [removing, setRemoving] = useState(false)
+
+  async function removeSelected() {
+    const list = proxies.filter((p) => selected.has(p.id))
+    if (!list.length) return
+    const busyOn = list.reduce((n, p) => n + (usedBy[p.id] ?? 0), 0)
+    if (!(await confirmDialog({
+      title: `Удалить прокси: ${list.length}?`,
+      message: busyOn
+        ? `Из них назначены аккаунтам: ${busyOn}. Аккаунты останутся с этой строкой подключения — назначьте им рабочие прокси.`
+        : 'Прокси будут удалены из каталога.',
+      confirmLabel: 'Удалить',
+      tone: 'danger',
+    }))) return
+    setRemoving(true)
+    // MR-170: ОДИН запрос на всё выделение (было N параллельных DELETE → гонка → «удалились все»).
+    const ids = list.map((p) => p.id)
+    try {
+      await deleteProxies(ids)
+      setProxies((prev) => prev.filter((x) => !ids.includes(x.id)))
+      setSelected(new Set())
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Не удалось удалить')
+    } finally { setRemoving(false) }
+  }
+
+  async function remove(p: Proxy) {
+    if (!(await confirmDialog({ title: 'Удалить прокси?', message: `${p.host}:${p.port} будет удалён. Аккаунты, использующие его, останутся с этой строкой подключения.`, confirmLabel: 'Удалить', tone: 'danger' }))) return
+    try { await deleteProxy(p.id); setProxies((prev) => prev.filter((x) => x.id !== p.id)) }
+    catch (e) { setErr(e instanceof Error ? e.message : 'Ошибка') }
+  }
+
+  const set = (k: keyof ProxyInput, v: unknown) => setForm((f) => ({ ...f, [k]: v }))
+
+  return (
+    <div>
+      <PageHeader
+        title="Прокси"
+        subtitle="Каталог прокси (статические / мобильные / своя ферма) и привязка к аккаунтам."
+        icon={<Network size={22} />}
+        badge={counts.all ? `${counts.all}` : undefined}
+        actions={(
+          <div className="flex items-center gap-2">
+            <HelpButton topic="proxy-policy" className="h-10 w-10" />
+            <button onClick={() => void testAll()} disabled={checkingAll || counts.all === 0} className="btn-ghost h-10 disabled:opacity-50" title="Проверить весь каталог: нерабочие пометятся сразу">
+              {checkingAll ? <Loader2 size={16} className="animate-spin" /> : <Zap size={16} />} Проверить все
+            </button>
+            <button onClick={() => setImportOpen(true)} className="btn-ghost h-10"><Upload size={16} /> Импорт списком</button>
+            <button onClick={openNew} className="btn-primary h-10"><Plus size={16} /> Новый прокси</button>
+          </div>
+        )}
+      />
+
+      {err && !editOpen && <Card className="mb-3 border-rose-500/30 p-3 text-sm text-rose-300">{err}</Card>}
+
+      {/* Фильтр «рабочие / нерабочие» + автообновление: статус прокси живёт своей жизнью
+          (фоновый чекер, работа аккаунтов), и страница обязана показывать свежее. */}
+      {counts.all > 0 && (
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          {([
+            { key: 'all', label: 'Все', n: counts.all },
+            { key: 'ok', label: 'Рабочие', n: counts.ok },
+            { key: 'broken', label: 'Нерабочие', n: counts.broken },
+            { key: 'unknown', label: 'Не проверены', n: counts.unknown },
+          ] as const).map((f) => (
+            <button
+              key={f.key}
+              onClick={() => setStatusFilter(f.key)}
+              className={cn(
+                'inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-xs font-semibold transition-colors',
+                statusFilter === f.key ? 'border-spark-500/40 bg-spark-500/12 text-spark-300' : 'border-line text-muted hover:text-fg',
+                f.key === 'broken' && f.n > 0 && statusFilter !== f.key && 'text-rose-300',
+              )}
+            >
+              {f.label}
+              <span className={cn('rounded px-1.5 py-0.5 text-[10px]', f.key === 'broken' && f.n > 0 ? 'bg-rose-500/20 text-rose-200' : 'bg-elevated text-muted')}>{f.n}</span>
+            </button>
+          ))}
+          <label className="ml-auto flex cursor-pointer select-none items-center gap-1.5 text-xs text-muted" title="Обновлять список каждые 30 секунд">
+            <input type="checkbox" checked={autoRefresh} onChange={(e) => setAutoRefresh(e.target.checked)} className="accent-spark-500" />
+            Автообновление
+          </label>
+        </div>
+      )}
+
+      {/*
+        ПАНЕЛЬ УПРАВЛЕНИЯ — ПЕРЕД таблицей, постраничность — ПОД ней.
+        Тот же порядок, что в менеджере аккаунтов: поиск и действия над выбранным сверху,
+        строки в таблице, навигатор снизу. Разные раскладки на двух списках одного вида
+        заставляют искать кнопку заново на каждой странице.
+      */}
+      <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-line bg-elevated/40 px-3 py-2">
+        <label className="flex cursor-pointer items-center gap-2 text-xs font-semibold text-white/70">
+          <input type="checkbox" checked={allVisibleSelected} onChange={toggleAllVisible} className="h-4 w-4 accent-spark-500" />
+          {selected.size > 0 ? `Выбрано: ${selected.size}` : `Выбрать все на странице (${visible.length})`}
+        </label>
+        <div className="relative min-w-[220px] flex-1">
+          <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Поиск по названию, хосту, заметке…"
+            className="input h-9 w-full pl-9"
+          />
+        </div>
+        {selected.size > 0 && (
+          <>
+            <button onClick={() => setSelected(new Set())} className="btn-ghost h-8 text-xs">Снять выбор</button>
+            <button
+              onClick={() => void removeSelected()}
+              disabled={removing}
+              className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-rose-500/30 bg-rose-500/15 px-3 text-xs font-semibold text-rose-300 transition-colors hover:bg-rose-500/25 disabled:opacity-50"
+            >
+              {removing ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />} Удалить выбранные ({selected.size})
+            </button>
+          </>
+        )}
+      </div>
+
+      {loading ? (
+        <Card className="p-6 text-sm text-white/50">Загрузка…</Card>
+      ) : loaded && counts.all === 0 ? (
+        <EmptyState icon={<Network size={26} />} title="Прокси пока нет" desc="Добавьте прокси и назначайте их аккаунтам в менеджере." />
+      ) : visible.length === 0 ? (
+        <Card className="p-6 text-center text-sm text-muted">
+          {query ? 'По этому запросу ничего не нашлось.' : statusFilter === 'broken' ? 'Нерабочих прокси нет — все живые.' : 'В этой выборке пусто.'}
+        </Card>
+      ) : (
+        <>
+        <div className="card overflow-hidden p-0">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-line bg-elevated/60 text-left text-[11px] font-bold uppercase tracking-wide text-muted">
+                  <th className="w-10 px-4 py-3">
+                    <input type="checkbox" checked={allVisibleSelected} onChange={toggleAllVisible} className="h-4 w-4 rounded border-line accent-spark-500" aria-label="Выбрать все на странице" />
+                  </th>
+                  <th className="px-4 py-3">Прокси</th>
+                  <th className="px-4 py-3">Тип</th>
+                  <th className="px-4 py-3">Страна</th>
+                  <th className="px-4 py-3">Статус</th>
+                  <th className="px-4 py-3">Аккаунтов</th>
+                  <th className="px-4 py-3 text-right">Действия</th>
+                </tr>
+              </thead>
+              <tbody>
+                {visible.map((p) => {
+                  const sm = statusMeta(p)
+                  return (
+                    <tr key={p.id} className={cn('border-b border-line/50 transition-colors last:border-0 hover:bg-elevated/40', selected.has(p.id) && 'bg-spark-500/5')}>
+                      <td className="px-4 py-3">
+                        <input type="checkbox" checked={selected.has(p.id)} onChange={() => toggleSel(p.id)} className="h-4 w-4 rounded border-line accent-spark-500" aria-label="Выбрать прокси" />
+                      </td>
+                      <td className="px-4 py-3">
+                        <button type="button" onClick={() => setDetailProxy(p)} className="group min-w-0 text-left" title="Открыть детали прокси">
+                          <div className="truncate font-semibold text-fg transition-colors group-hover:text-spark-300">{p.label || `${p.host}:${p.port}`}</div>
+                          {/* Логин показываем, пароль — нет: он не нужен на экране и не уезжает с сервера. */}
+                          <div className="truncate font-mono text-xs text-muted">{p.scheme}://{p.username ? `${p.username}@` : ''}{p.host}:{p.port}</div>
+                          {geoMap[p.id] && (
+                            <div className="mt-0.5 flex items-center gap-1 truncate text-xs text-spark-300">
+                              <MapPin size={11} className="shrink-0" /> {FLAGS[geoMap[p.id]!.country] || ''} {geoMap[p.id]!.countryName}{geoMap[p.id]!.city ? `, ${geoMap[p.id]!.city}` : ''}
+                              {geoSrcMap[p.id] === 'exit'
+                                ? <span className="shrink-0 rounded bg-spark-500/15 px-1 text-[10px] font-semibold text-spark-300" title="Гео РЕАЛЬНОГО IP: запрос ушёл через сам прокси. Именно оно важно для антифрода.">гео реального IP</span>
+                                : geoSrcMap[p.id] === 'gateway'
+                                  ? <span className="shrink-0 rounded bg-amber-500/15 px-1 text-[10px] font-semibold text-amber-300" title="Выходной IP определить не удалось — показано гео самого сервера прокси.">гео сервера (примерно)</span>
+                                  : null}
+                            </div>
+                          )}
+                          {geoMap[p.id] === null && testing !== p.id && <div className="mt-0.5 text-xs text-amber-300">Гео не определено</div>}
+                        </button>
+                      </td>
+                      <td className="px-4 py-3"><Badge tone="iris">{PROXY_KIND_LABELS[p.kind]}</Badge></td>
+                      <td className="px-4 py-3">
+                        {p.country ? (
+                          // Гео по шлюзу — страна дата-центра, а не выхода: у мобильных прокси
+                          // они разные, и раздавать такой прокси «по стране» опасно.
+                          <Tip className="text-sm" text={p.geoSource === 'gateway' ? 'Страна определена по адресу сервера — приблизительно' : p.geoSource === 'exit' ? 'Страна реального выходного IP' : undefined}>
+                            {FLAGS[p.country] || p.country.toUpperCase()}
+                            {p.geoSource === 'gateway' && <span className="ml-0.5 text-[10px] text-amber-300">≈</span>}
+                          </Tip>
+                        ) : <span className="text-faint">—</span>}
+                      </td>
+                      <td className="px-4 py-3"><Tip text={sm.hint}><Badge tone={sm.tone}>{sm.label}</Badge></Tip></td>
+                      <td className="px-4 py-3 tabular-nums font-semibold text-white/80">{p.usedBy ?? 0}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center justify-end gap-1.5">
+                          <button onClick={() => void doTest(p)} disabled={testing === p.id} className="btn-ghost h-9 text-xs disabled:opacity-50">{testing === p.id ? <Loader2 size={14} className="animate-spin" /> : <Zap size={14} />} Тест</button>
+                          <button onClick={() => setAssignFor(p)} className="btn-ghost h-9 text-xs"><Link2 size={14} /> Назначить</button>
+                          <button onClick={() => openEdit(p)} className="btn-icon h-9 w-9" aria-label="Изменить"><Pencil size={14} /></button>
+                          <button onClick={() => void remove(p)} className="btn-icon-danger h-9 w-9" aria-label="Удалить прокси" title="Удалить прокси"><Trash2 size={14} /></button>
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* Навигатор — снаружи таблицы, как в менеджере аккаунтов. */}
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2 text-sm text-muted">
+            <span>Показано {pageInfo.total ? page * pageSize + 1 : 0}–{Math.min((page + 1) * pageSize, pageInfo.total)} из {pageInfo.total}</span>
+            <Select
+              className="w-24"
+              value={String(pageSize)}
+              onChange={(v) => { setPageSize(Number(v)); setPage(0) }}
+              options={[10, 25, 50, 100].map((n) => ({ value: String(n), label: `${n} / стр` }))}
+            />
+          </div>
+          <div className="flex items-center gap-1">
+            <button disabled={page === 0} onClick={() => setPage((x) => x - 1)} className="btn-ghost h-9 px-3 disabled:opacity-40">Назад</button>
+            {Array.from({ length: pageInfo.pages }).map((_, i) => (
+              <button key={i} onClick={() => setPage(i)} className={cn('h-9 w-9 rounded-lg text-sm font-semibold', i === page ? 'bg-spark-gradient text-[#04150c]' : 'border border-line bg-elevated text-muted hover:text-fg')}>{i + 1}</button>
+            ))}
+            <button disabled={page >= pageInfo.pages - 1} onClick={() => setPage((x) => x + 1)} className="btn-ghost h-9 px-3 disabled:opacity-40">Вперёд</button>
+          </div>
+        </div>
+        </>
+      )}
+
+      {/* Создание / редактирование */}
+      <Modal open={editOpen} onClose={() => setEditOpen(false)} title={editing ? 'Изменить прокси' : 'Новый прокси'} icon={<Network size={20} />}>
+        <div className="grid grid-cols-2 gap-3">
+          <div className="col-span-2"><label className="label">Название</label><input value={form.label ?? ''} onChange={(e) => set('label', e.target.value)} className="input" placeholder="Напр. Ферма UA #1" /></div>
+          <div><label className="label">Тип</label><Select value={form.kind ?? 'static'} onChange={(v) => set('kind', v as ProxyKind)} options={(Object.keys(PROXY_KIND_LABELS) as ProxyKind[]).map((k) => ({ value: k, label: PROXY_KIND_LABELS[k] }))} /></div>
+          <div><label className="label">Протокол</label><Select value={form.scheme ?? 'socks5'} onChange={(v) => set('scheme', v)} options={[{ value: 'socks5', label: 'SOCKS5' }, { value: 'http', label: 'HTTP' }]} /></div>
+          <div><label className="label">Host / IP</label><input value={form.host ?? ''} onChange={(e) => set('host', e.target.value)} className="input" placeholder="1.2.3.4" /></div>
+          <div><label className="label">Port</label><input type="number" value={form.port ?? 0} onChange={(e) => set('port', Number(e.target.value))} className="input" placeholder="1080" /></div>
+          <div><label className="label">Логин</label><input value={form.username ?? ''} onChange={(e) => set('username', e.target.value)} className="input" placeholder="(опц.)" /></div>
+          <div><label className="label">Пароль</label><input value={form.password ?? ''} onChange={(e) => set('password', e.target.value)} className="input" placeholder="(опц.)" /></div>
+          <div className="col-span-2"><label className="label">Заметка</label><input value={form.note ?? ''} onChange={(e) => set('note', e.target.value)} className="input" placeholder="(опц.)" /></div>
+        </div>
+        <p className="mt-2 text-xs text-white/40">Статус и страна определяются автоматически при проверке — выбирать вручную не нужно.</p>
+        {err && editOpen && <div className="mt-2 text-sm text-rose-300">{err}</div>}
+        <div className="mt-4 flex justify-end gap-2">
+          <button onClick={() => setEditOpen(false)} className="btn-ghost h-10">Отмена</button>
+          <button onClick={() => void save()} disabled={saving || !form.host || !form.port} className="btn-primary h-10 disabled:opacity-40">{saving ? 'Сохранение…' : editing ? 'Сохранить' : 'Создать'}</button>
+        </div>
+      </Modal>
+
+      {assignFor && <AssignModal proxy={assignFor} accounts={accounts} onClose={() => setAssignFor(null)} onDone={() => { setAssignFor(null); void load() }} />}
+
+      <ImportProxiesModal open={importOpen} onClose={() => setImportOpen(false)} onDone={() => void load()} />
+
+      {detailProxy && (
+        <ProxyDetailModal
+          proxy={detailProxy}
+          accountsCount={usedBy[detailProxy.id] ?? 0}
+          onClose={() => setDetailProxy(null)}
+          onUpdated={(up) => { setProxies((prev) => prev.map((x) => (x.id === up.id ? up : x))); setDetailProxy(up) }}
+        />
+      )}
+    </div>
+  )
+}
+
+/** Детали прокси: при открытии запускает проверку и показывает всё, что смогли вытащить
+ *  (статус, пинг, страна/город/провайдер выхода, выходной IP, последняя проверка). */
+function ProxyDetailModal({ proxy, accountsCount, onClose, onUpdated }: {
+  proxy: Proxy; accountsCount: number; onClose: () => void; onUpdated?: (p: Proxy) => void
+}) {
+  const [p, setP] = useState<Proxy>(proxy)
+  const [geo, setGeo] = useState<ProxyGeo | null>(null)
+  const [geoSource, setGeoSource] = useState<'exit' | 'gateway' | null>(null)
+  const [ms, setMs] = useState<number | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  const run = async () => {
+    setLoading(true)
+    try {
+      const r = await checkProxy(proxy.id)
+      setP(r.proxy); setGeo(r.geo); setGeoSource(r.geoSource ?? null); setMs(r.ms ?? null)
+      onUpdated?.(r.proxy)
+    } catch { setGeo(null) }
+    finally { setLoading(false) }
+  }
+  useEffect(() => { void run() /* авто-проверка при открытии */ }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const sm = statusMeta(p)
+  const fmtDate = (t: number | null | undefined) => (t ? new Date(t).toLocaleString('ru-RU') : '—')
+
+  return (
+    <Modal open onClose={onClose} title={p.label || `${p.host}:${p.port}`} subtitle="Детали прокси" icon={<Network size={20} />} size="md">
+      <div className="mb-3 flex items-center gap-2 rounded-xl border border-line bg-elevated/40 px-3 py-2">
+        <span className="font-mono text-xs text-white/70">{p.scheme}://{p.username ? `${p.username}@` : ''}{p.host}:{p.port}</span>
+        <button onClick={() => void run()} disabled={loading} className="btn-ghost ml-auto h-8 text-xs disabled:opacity-50">
+          {loading ? <Loader2 size={13} className="animate-spin" /> : <Zap size={13} />} Проверить
+        </button>
+      </div>
+
+      {loading && !geo ? (
+        <div className="flex items-center gap-2 py-6 text-sm text-white/50"><Loader2 size={16} className="animate-spin" /> Проверяем прокси и тянем гео выхода…</div>
+      ) : (
+        <div className="grid grid-cols-2 gap-2">
+          {/* В деталях причину пишем текстом — сюда приходят именно разбираться. */}
+          <ProxyInfo label="Статус">
+            <Tip text={sm.hint}><Badge tone={sm.tone}>{sm.label}</Badge></Tip>
+            {p.status !== 'ok' && p.status !== 'unknown' && (
+              <div className="mt-1 text-[11px] leading-snug text-muted">
+                {p.reason === 'no_telegram' ? 'Интернет открывается, но соединение с серверами Telegram не проходит — замените прокси.'
+                  : p.reason === 'protocol' ? 'Порт открыт, но наружу не пускает — попробуйте сменить схему http ↔ socks5.'
+                    : 'Хост не отвечает.'}
+              </div>
+            )}
+          </ProxyInfo>
+          <ProxyInfo label="Тип">{PROXY_KIND_LABELS[p.kind]}</ProxyInfo>
+          <ProxyInfo label="Пинг">{ms != null ? `${ms} мс` : '—'}</ProxyInfo>
+          <ProxyInfo label="Назначено аккаунтов">{accountsCount}</ProxyInfo>
+          <ProxyInfo label="Страна, которую видит Telegram">
+            {geo ? <span>{FLAGS[geo.country] || ''} {geo.countryName || geo.country?.toUpperCase() || '—'}
+              {geoSource === 'exit'
+                ? <span className="ml-1 rounded bg-spark-500/15 px-1 text-[10px] font-semibold text-spark-300" title="Определено по реальному выходному IP — сходили в интернет через сам прокси">гео реального IP</span>
+                : geoSource === 'gateway'
+                  ? <span className="ml-1 rounded bg-amber-500/15 px-1 text-[10px] font-semibold text-amber-300" title="Выходной IP определить не удалось — показано гео самого прокси-сервера, оно может отличаться">гео сервера (примерно)</span>
+                  : null}</span> : '—'}
+          </ProxyInfo>
+          <ProxyInfo label="Город">{geo?.city || '—'}</ProxyInfo>
+          <ProxyInfo label="Провайдер (ISP)">{geo?.isp || '—'}</ProxyInfo>
+          <ProxyInfo label="Выходной IP (его видит Telegram)">{geo?.ip || '—'}</ProxyInfo>
+          <ProxyInfo label="Последняя проверка">{fmtDate(p.lastCheckAt)}</ProxyInfo>
+          <ProxyInfo label="Добавлен">{fmtDate(p.createdAt)}</ProxyInfo>
+          {p.note && <div className="col-span-2"><ProxyInfo label="Заметка">{p.note}</ProxyInfo></div>}
+        </div>
+      )}
+      {!loading && p.status === 'dead' && (
+        <p className="mt-3 text-xs text-amber-300">Прокси не отвечает — гео выхода недоступно, пока он мёртв.</p>
+      )}
+      {!loading && p.status === 'bad' && (
+        <p className="mt-3 text-xs text-amber-300">
+          Порт открыт, но выйти в интернет через прокси не удалось. Чаще всего дело в схеме:
+          попробуйте сменить {p.scheme === 'socks5' ? 'SOCKS5 на HTTP' : 'HTTP на SOCKS5'} и проверить снова.
+          У многих продавцов соседние порты — это одна пара, где один HTTP, второй SOCKS5.
+        </p>
+      )}
+    </Modal>
+  )
+}
+
+function ProxyInfo({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="rounded-xl border border-line bg-elevated/40 px-3 py-2">
+      <div className="text-[10px] font-bold uppercase tracking-wide text-white/40">{label}</div>
+      <div className="mt-0.5 truncate text-sm font-semibold text-fg">{children}</div>
+    </div>
+  )
+}
+
+/** Назначение прокси на аккаунты: чекбоксы, save → patchAccount(proxyId). */
+function AssignModal({ proxy, accounts, onClose, onDone }: { proxy: Proxy; accounts: TgAccount[]; onClose: () => void; onDone: () => void }) {
+  const [picked, setPicked] = useState<Set<string>>(() => new Set(accounts.filter((a) => a.proxyId === proxy.id).map((a) => a.id)))
+  const [saving, setSaving] = useState(false)
+  const active = accounts.filter((a) => !a.inTrash)
+
+  const toggle = (id: string) => setPicked((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
+
+  async function save() {
+    setSaving(true)
+    try {
+      // назначить выбранным, снять с тех, кто был на этом прокси, но снят из выбора
+      const wasOn = new Set(accounts.filter((a) => a.proxyId === proxy.id).map((a) => a.id))
+      const ops: Promise<unknown>[] = []
+      for (const a of active) {
+        const shouldHave = picked.has(a.id)
+        const hasNow = wasOn.has(a.id)
+        if (shouldHave && !hasNow) ops.push(patchAccount(a.id, { proxyId: proxy.id, initiator: 'operator' }))
+        else if (!shouldHave && hasNow) ops.push(patchAccount(a.id, { proxyId: null, initiator: 'operator' }))
+      }
+      await Promise.all(ops)
+      onDone()
+    } finally { setSaving(false) }
+  }
+
+  return (
+    <Modal open onClose={onClose} title="Назначить прокси" subtitle={`${proxy.label || proxy.host}:${proxy.port} → аккаунты`} icon={<Link2 size={20} />} size="md">
+      <div className="max-h-80 overflow-y-auto rounded-xl border border-line">
+        {active.length === 0 ? (
+          <div className="p-4 text-sm text-white/50">Нет аккаунтов.</div>
+        ) : active.map((a) => {
+          const on = picked.has(a.id)
+          const other = !!a.proxyId && a.proxyId !== proxy.id
+          return (
+            <button key={a.id} onClick={() => toggle(a.id)} className="flex w-full items-center gap-3 border-b border-line/60 px-3 py-2 text-left last:border-0 hover:bg-elevated">
+              <span className={on ? 'text-spark-400' : 'text-white/30'}>{on ? <Check size={16} /> : <Circle size={16} />}</span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm text-fg">{a.name}</span>
+                <span className="truncate text-xs text-white/40">{FLAGS[a.country] || ''} {other ? 'уже на другом прокси' : a.proxyId === proxy.id ? 'на этом прокси' : 'без прокси'}</span>
+              </span>
+            </button>
+          )
+        })}
+      </div>
+      <div className="mt-4 flex items-center justify-between">
+        <span className="text-xs text-white/40">Выбрано: {picked.size}</span>
+        <div className="flex gap-2">
+          <button onClick={onClose} className="btn-ghost h-10">Отмена</button>
+          <button onClick={() => void save()} disabled={saving} className="btn-primary h-10 disabled:opacity-40">{saving ? 'Применение…' : 'Применить'}</button>
+        </div>
+      </div>
+    </Modal>
+  )
+}

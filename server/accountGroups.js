@@ -1,0 +1,237 @@
+/**
+ * §12: группы (папки) аккаунтов — чтобы выдавать доступ роли на ГРУППУ, а не по
+ * одному аккаунту, и выбирать аккаунты папкой при настройке кампании (§5).
+ *
+ * Важно: группа — отдельная сущность и сама держит список аккаунтов
+ * (как закрепление в кампании). Поле в `accountsMeta.js` не заводим — это файл
+ * соседней дорожки, и хранение «наоборот» позволяет не трогать его вовсе.
+ *
+ * Хранение — JSON `data/account-groups.json`; путь через env ACCOUNT_GROUPS_FILE.
+ */
+import crypto from 'crypto'
+import { dataPath, readJson, mutateJson } from './lib/jsonStore.js'
+import { listStore } from './lib/tableStore.js'
+import { getSupabase, supabaseEnabled, isMissingTable } from './lib/supabase.js'
+
+const GROUPS_FILE = process.env.ACCOUNT_GROUPS_FILE || dataPath('account-groups.json')
+
+const MEMBERS_TABLE = 'account_group_members'
+function sb() { return supabaseEnabled() ? getSupabase() : null }
+
+// §10.2: группы аккаунтов переехали в Supabase — на них выдаются права в ролях,
+// хранить их в файле рядом с процессом нельзя (на втором инстансе доступы разъедутся).
+//
+// MR-290: состав группы больше НЕ пишется в jsonb-колонку account_ids — он живёт
+// строками в account_group_members, с внешними ключами на группу и на аккаунт. Чтение
+// колонки оставлено запасным путём на окно выката (миграции применяются раньше кода, но
+// обратный порядок тоже случается) — писать в неё уже нельзя, иначе появятся два
+// расходящихся источника состава.
+const groupsStore = listStore({
+  table: 'account_groups',
+  file: () => GROUPS_FILE,
+  toRow: (g) => ({
+    id: g.id, name: g.name || '',
+    color: g.color || '', note: g.note || '', user_id: g.userId || null,
+    created_at: new Date(g.createdAt || Date.now()).toISOString(),
+    updated_at: new Date(g.updatedAt || Date.now()).toISOString(),
+  }),
+  fromRow: (r) => ({
+    id: r.id, name: r.name || '', accountIds: r.account_ids || [],
+    color: r.color || '', note: r.note || '', userId: r.user_id || undefined,
+    createdAt: r.created_at ? new Date(r.created_at).getTime() : 0,
+    updatedAt: r.updated_at ? new Date(r.updated_at).getTime() : 0,
+  }),
+  // Состав подставляется ОДНИМ запросом на всю выборку, а не по запросу на группу.
+  async enrich(groups, db) {
+    const members = await readMembers(db)
+    if (!members) return groups // таблицы ещё нет — остаётся запасной путь из колонки
+    return groups.map((g) => ({ ...g, accountIds: members.get(g.id) || [] }))
+  },
+  // Строки групп уже записаны — теперь можно ставить связи, не упираясь в внешний ключ.
+  afterWrite: (groups, db) => writeMembers(db, groups),
+})
+
+/**
+ * Достать состав групп из таблицы связи и разложить по группам.
+ * @param {any} db @returns {Promise<Map<string, string[]> | null>} null — таблицы ещё нет
+ */
+async function readMembers(db) {
+  const { data, error } = await db.from(MEMBERS_TABLE)
+    .select('group_id, account_id, position')
+    .order('position', { ascending: true })
+  if (error) {
+    // Таблицы нет — значит миграция не доехала: работаем по старой колонке, а не падаем.
+    if (isMissingTable(error)) return null
+    throw new Error(`[${MEMBERS_TABLE}] чтение состава групп не удалось: ${error.message}`)
+  }
+  const byGroup = new Map()
+  for (const r of data || []) {
+    const list = byGroup.get(r.group_id) || []
+    list.push(r.account_id)
+    byGroup.set(r.group_id, list)
+  }
+  return byGroup
+}
+
+/**
+ * Ключ пары «группа + аккаунт» для сверки в памяти. Разделитель записан
+ * escape-последовательностью, а не самим символом: в исходнике такой байт превращает
+ * файл в «бинарный» для grep и diff. В идентификаторах он встретиться не может, поэтому
+ * две разные пары никогда не дадут один ключ — в отличие от склейки через дефис, где
+ * «a-b» + «c» и «a» + «b-c» дают одно и то же.
+ */
+const pairKey = (groupId, accountId) => groupId + "\u0000" + accountId
+
+/**
+ * Привести состав ПЕРЕЧИСЛЕННЫХ групп к заданному. Чужие группы не трогаем: писать
+ * «всё, чего нет в моей копии» — та же болезнь, от которой лечили tableStore.
+ * @param {any} db @param {{id:string, accountIds?:string[]}[]} groups
+ */
+async function writeMembers(db, groups) {
+  const ids = groups.map((g) => g.id)
+  if (!ids.length) return
+  const wanted = []
+  for (const g of groups) {
+    (g.accountIds || []).forEach((accountId, position) => {
+      wanted.push({ group_id: g.id, account_id: accountId, position })
+    })
+  }
+  if (wanted.length) {
+    const { error } = await db.from(MEMBERS_TABLE).upsert(wanted, { onConflict: 'group_id,account_id' })
+    if (error) {
+      if (isMissingTable(error)) return
+      // Внешний ключ здесь — не помеха, а смысл: аккаунта нет, значит и права на него
+      // выдавать не из чего. Сообщение доходит до человека, а не тонет в логе.
+      throw new Error(`[${MEMBERS_TABLE}] не удалось сохранить состав группы: ${error.message}`)
+    }
+  }
+  const { data: current, error: readErr } = await db.from(MEMBERS_TABLE)
+    .select('group_id, account_id').in('group_id', ids)
+  if (readErr) {
+    if (isMissingTable(readErr)) return
+    throw new Error(`[${MEMBERS_TABLE}] сверка состава не удалась: ${readErr.message}`)
+  }
+  const keep = new Set(wanted.map((w) => pairKey(w.group_id, w.account_id)))
+  const gone = (current || []).filter((r) => !keep.has(pairKey(r.group_id, r.account_id)))
+  for (const r of gone) {
+    const { error } = await db.from(MEMBERS_TABLE).delete()
+      .eq('group_id', r.group_id).eq('account_id', r.account_id)
+    if (error) throw new Error(`[${MEMBERS_TABLE}] не удалось убрать аккаунт из группы: ${error.message}`)
+  }
+}
+
+const FIELDS = ['name', 'accountIds', 'color', 'note']
+
+const normIds = (v) => (Array.isArray(v) ? [...new Set(v.map((x) => String(x || '').trim()).filter(Boolean))] : [])
+
+/** Нормализовать вход в чистую группу. @param {object} input */
+export function normalizeGroup(input = {}) {
+  return {
+    name: String(input.name ?? '').trim(),
+    accountIds: normIds(input.accountIds),
+    color: String(input.color ?? '').trim().slice(0, 20),
+    note: String(input.note ?? '').slice(0, 300),
+  }
+}
+
+export async function listGroups() {
+  return groupsStore.readAll()
+}
+
+export async function getGroup(id) {
+  const all = await groupsStore.readAll()
+  return all.find((g) => g.id === id) || null
+}
+
+export async function createGroup(input) {
+  const clean = normalizeGroup(input)
+  if (!clean.name) throw new Error('Укажите название группы')
+  // §11.3: кто создал группу.
+  const group = { id: `grp_${crypto.randomUUID().slice(0, 8)}`, ...clean, userId: String(input?.userId || '').trim() || undefined, createdAt: Date.now(), updatedAt: Date.now() }
+  await groupsStore.mutate((all) => { all.unshift(group); return all })
+  return group
+}
+
+export async function updateGroup(id, patch = {}) {
+  let result = null
+  await groupsStore.mutate((all) => {
+  const i = all.findIndex((g) => g.id === id)
+  if (i === -1) return undefined
+  for (const k of FIELDS) {
+    if (patch[k] === undefined) continue
+    if (k === 'accountIds') all[i].accountIds = normIds(patch[k])
+    else all[i][k] = String(patch[k]).trim()
+  }
+  if (!all[i].name) throw new Error('Название группы не может быть пустым')
+  all[i].updatedAt = Date.now()
+  result = all[i]
+  return all
+  })
+  return result
+}
+
+export async function deleteGroup(id) {
+  let removed = false
+  await groupsStore.mutate((all) => {
+    const next = all.filter((g) => g.id !== id)
+    if (next.length === all.length) return undefined
+    removed = true
+    return next
+  })
+  return removed
+}
+
+/**
+ * §12: все аккаунты из перечисленных групп (без дублей). Чистая функция.
+ * @param {object[]} groups @param {string[]} groupIds @returns {string[]}
+ */
+export function accountsOfGroups(groups = [], groupIds = []) {
+  const want = new Set((groupIds || []).map(String))
+  const out = new Set()
+  for (const g of Array.isArray(groups) ? groups : []) {
+    if (!want.has(g?.id)) continue
+    for (const id of g.accountIds || []) out.add(id)
+  }
+  return [...out]
+}
+
+/**
+ * §12: в каких группах состоит аккаунт (для показа меток). Чистая функция.
+ * @returns {Record<string, {id: string, name: string}[]>} accountId → группы
+ */
+export function groupsByAccount(groups = []) {
+  /** @type {Record<string, {id: string, name: string}[]>} */
+  const map = {}
+  for (const g of Array.isArray(groups) ? groups : []) {
+    for (const id of g?.accountIds || []) {
+      (map[id] ||= []).push({ id: g.id, name: g.name })
+    }
+  }
+  return map
+}
+
+/**
+ * §12: разрешён ли аккаунт роли — напрямую ИЛИ через разрешённую группу.
+ * Прямой deny сильнее группового allow (точечный запрет важнее). Чистая функция.
+ *
+ * Контракт значений — как во всём `roles.js`: строки `'allow'`/`'deny'`
+ * (отсутствие ключа = «мнения нет», не запрет). Зеркало `src/shared/lib/access.ts`.
+ *
+ * ВАЖНО: после `mergePermissions` (объединение ролей — union) в правах остаются
+ * ТОЛЬКО ключи `'allow'`, поэтому ветка точечного deny работает лишь для прав
+ * одной сырой роли. Это следствие union-семантики, а не недосмотр.
+ *
+ * @param {Record<string, 'allow'|'deny'>} accountPerms accountId → allow/deny
+ * @param {Record<string, 'allow'|'deny'>} groupPerms   groupId → allow/deny
+ * @param {object[]} groups
+ * @param {string} accountId
+ */
+export function isAccountAllowedViaGroups(accountPerms = {}, groupPerms = {}, groups = [], accountId) {
+  if (accountPerms[accountId] === 'deny') return false // точечный запрет сильнее
+  if (accountPerms[accountId] === 'allow') return true
+  for (const g of Array.isArray(groups) ? groups : []) {
+    if (groupPerms[g?.id] !== 'allow') continue
+    if ((g.accountIds || []).includes(accountId)) return true
+  }
+  return false
+}

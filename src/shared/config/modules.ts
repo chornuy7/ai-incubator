@@ -128,7 +128,6 @@ export interface ModuleConfig {
   lookModeLabel?: string
   lookModeOptions?: { label: string; value: 'stories' | 'posts' | 'both' }[]
   lookPostsLabel?: string
-  lookPostsPresets?: { label: string; value: number }[]
   lookPostsDefault?: number
   // warming специфика
   warmingLayout?: boolean
@@ -147,7 +146,6 @@ export interface ModuleConfig {
   commentFilter?: boolean
   resultsTitle?: string
   defaultKeywords?: string[]
-  aiKeywords?: { w: string; p: number }[]
   endLangDefault?: string
   defaultMinMembers?: number
   defaultLimit?: number | '∞'
@@ -160,14 +158,16 @@ export interface ModuleConfig {
     formatHint?: string
     historyBtn?: string
     keywords?: { label: string; hint: string }
-    limits?: { label: string; value: number; hint: string }[]
+    // min/max — те же границы, что названы в hint. Держим их данными, а не только текстом:
+    // поле обязано не пускать значение вне диапазона, а не сообщать о нём словами.
+    limits?: { label: string; value: number; hint: string; min?: number; max?: number }[]
     baseFilters: { label: string; on?: boolean }[]
     profileFilters: { label: string; premium?: boolean; admin?: boolean }[]
     activityFilter?: boolean
     extraOptions?: { label: string; on?: boolean }[]
     activeStories?: boolean
     delays: { label: string; value: number }[]
-    unit: { title: string; count: number; limitLabel: string; limitValue: number }
+    unit: { title: string; count: number; limitLabel: string; limitValue: number; limitMin?: number; limitMax?: number }
     resultCount: number
   }
   delays?: { label: string; from: number; to?: number; unit?: string }[]
@@ -196,7 +196,8 @@ export const MODULES: Record<string, ModuleConfig> = {
     subtitle: 'ИИ-комментарии под постами каналов. Мониторинг каналов и автоматическая генерация умных комментариев нейросетью.',
     accent: 'spark',
     richLayout: true,
-    settingsTitle: 'Настройки комментирования',
+    // MR-104: во всех модулях блок настроек называется одинаково — «Настройки» (дефолт).
+
     selectedTitle: 'Выбрано для комментирования',
     unit: { gen: 'каналов', title: 'Каналы', maxLabel: 'Макс. комментариев' },
     accountPicker: true,
@@ -208,10 +209,20 @@ export const MODULES: Record<string, ModuleConfig> = {
       { label: 'Сбалансированный', desc: 'Оптимальный баланс' },
       { label: 'Агрессивный', desc: 'Высокая скорость' },
     ],
+    // Правка 18.08 (вторая итерация). Сначала было три спорящих режима, потом два ряда —
+    // и оба варианта заставляли выбирать дважды одно и то же: «по ключевым словам» плохо
+    // сочетается с «только последний пост», а «любые посты» с «все доступные» — это одно
+    // и то же, сказанное дважды. Теперь ОДИН список взаимоисключающих ответов на вопрос
+    // «что комментировать». Сколько брать из подходящих — отдельная галочка ниже.
     toggleGroups: [
-      { label: 'Режим комментирования', options: ['Случайный', 'По ключевым словам', 'Все посты'] },
+      {
+        // «Все доступные» из списка убрано (правка 18.08): всей истории канала модуль и
+        // так не читает — он берёт `postWindow` последних постов, то есть «все доступные»
+        // и «последние N» были одним вариантом под двумя именами.
+        label: 'Что комментировать',
+        options: ['Мониторинг новых', 'Только последний пост', 'Последние N постов', 'По ключевым словам'],
+      },
       { label: 'Режим работы', options: ['По количеству', 'По времени'] },
-      { label: 'Какие посты комментировать', options: ['Только новые', 'Только существующие', 'Сначала существующие, потом новые'] },
     ],
     probabilitySlider: { label: 'Вероятность комментария', value: 30 },
     workModeFields: { maxLabel: 'Макс. комментариев', maxValue: 100, perAccount: true, minWords: true },
@@ -222,7 +233,10 @@ export const MODULES: Record<string, ModuleConfig> = {
     subscriptionsToggle: true,
     progressBar: true,
     sourceTabs: {
-      label: 'Целевые каналы', tabs: ['Юзернейм/Ссылка', 'Прошлые задачи', 'Папка'],
+      // Правка 17.08: вкладки «Прошлые задачи»/«Группа» были мёртвыми (ничего не рендерили —
+      // ни в TargetsEditor, ни в ModuleRunner), а сохранённые группы уже даёт кнопка «Загрузить
+      // группу». Оставляем один ввод, без пустых вкладок («каждая кнопка должна иметь смысл»).
+      label: 'Группы', tabs: ['Юзернейм/Ссылка'],
       addLabel: 'Добавить', clearLabel: 'Очистить все',
       placeholder: '@username или https://t.me/channel_name\nМожно вводить несколько ссылок (каждая с новой строки)', emptyRows: 'Строк: 0',
     },
@@ -238,7 +252,7 @@ export const MODULES: Record<string, ModuleConfig> = {
       { label: 'FloodWait задержка (сек)', from: 120 },
       { label: 'Кол-во FloodWait до карантина', from: 3 },
     ],
-    delayPresets: ['Мин', 'Рекомендуемые', 'Макс'],
+    delayPresets: ['Агрессивный', 'Сбалансированный', 'Консервативный'],
     settingsPresets: true,
     launchStats: true,
     counters: [{ label: 'каналов', value: '233' }, { label: 'интервал', value: '120с' }, { label: 'макс. комм.', value: '100' }],
@@ -255,7 +269,8 @@ export const MODULES: Record<string, ModuleConfig> = {
     subtitle: 'ИИ-ответы в группах и чатах. Мониторинг диалогов в группах и автоматические умные ответы нейросетью.',
     accent: 'spark',
     richLayout: true,
-    settingsTitle: 'Настройки чаттинга',
+    // MR-104: единое название блока настроек — «Настройки».
+
     selectedTitle: 'Выбрано для чаттинга',
     unit: { gen: 'групп', title: 'Группы', maxLabel: 'Макс. сообщений' },
     accountPicker: true,
@@ -267,8 +282,10 @@ export const MODULES: Record<string, ModuleConfig> = {
       { label: 'Сбалансированный', desc: 'Оптимальный баланс' },
       { label: 'Агрессивный', desc: 'Высокая скорость' },
     ],
+    // «Режим реакции» («По интервалу» / «На триггеры») удалён 26.08 как несуществующий:
+    // воркер runNeuroChatting не читает ни reactMode, ни commentMode, ни postFilter, и ни
+    // интервалов, ни триггеров в модуле нет вовсе — переключатель просто ничего не делал.
     toggleGroups: [
-      { label: 'Режим реакции', options: ['По интервалу', 'На триггеры'] },
       { label: 'Режим работы', options: ['По количеству', 'По времени'] },
     ],
     probabilitySlider: { label: 'Вероятность ответа', value: 30 },
@@ -279,7 +296,10 @@ export const MODULES: Record<string, ModuleConfig> = {
     seedTargetCount: 153,
     subscriptionsToggle: true,
     sourceTabs: {
-      label: 'Целевые группы', tabs: ['Юзернейм/Ссылка', 'Прошлые задачи', 'Папка'],
+      // Правка 17.08: вкладки «Прошлые задачи»/«Группа» были мёртвыми (ничего не рендерили —
+      // ни в TargetsEditor, ни в ModuleRunner), а сохранённые группы уже даёт кнопка «Загрузить
+      // группу». Оставляем один ввод, без пустых вкладок («каждая кнопка должна иметь смысл»).
+      label: 'Группы', tabs: ['Юзернейм/Ссылка'],
       addLabel: 'Добавить', clearLabel: 'Очистить все',
       placeholder: '@group или https://t.me/group\nМожно вводить несколько ссылок (каждая с новой строки)', emptyRows: 'Строк: 0',
     },
@@ -296,7 +316,7 @@ export const MODULES: Record<string, ModuleConfig> = {
       { label: 'FloodWait задержка (сек)', from: 120 },
       { label: 'Кол-во FloodWait до карантина', from: 3 },
     ],
-    delayPresets: ['Мин', 'Рекомендуемые', 'Макс'],
+    delayPresets: ['Агрессивный', 'Сбалансированный', 'Консервативный'],
     settingsPresets: true,
     launchStats: true,
     progressBar: true,
@@ -314,7 +334,8 @@ export const MODULES: Record<string, ModuleConfig> = {
     subtitle: 'Автоматические реакции на посты в каналах и группах. Мониторинг новых постов или реакции на существующие с настраиваемыми эмодзи.',
     accent: 'spark',
     richLayout: true,
-    settingsTitle: 'Настройки реакций',
+    // MR-104: единое название блока настроек — «Настройки».
+
     selectedTitle: 'Выбрано для реакций',
     unit: { gen: 'групп', title: 'Группы', maxLabel: 'Цель' },
     accountPicker: true,
@@ -322,7 +343,7 @@ export const MODULES: Record<string, ModuleConfig> = {
     accountFilters: true,
     aiProtection: true,
     reactionSettings: {
-      modes: ['Мониторинг', 'Существующие сообщения'],
+      modes: ['Мониторинг новых', 'Существующие посты'],
       duration: { label: 'Длительность (минуты)', value: 60, hint: '0 = без лимита' },
       max: { label: 'Максимум реакций', value: 100 },
       perAccount: { label: 'Максимум реакций на 1 аккаунт' },
@@ -335,7 +356,8 @@ export const MODULES: Record<string, ModuleConfig> = {
     seedTargetCount: 93,
     subscriptionsToggle: true,
     sourceTabs: {
-      label: 'Цели', tabs: ['Username / Ссылка', 'Из заданий', 'Папка'],
+      // Правка 17.08: убраны мёртвые вкладки «Из заданий»/«Группа» (см. выше).
+      label: 'Группы', tabs: ['Username / Ссылка'],
       addLabel: 'Добавить', clearLabel: 'Очистить',
       placeholder: 'Введите username или ссылку на группу\nПо одному на строку', emptyRows: 'Строк: 0',
     },
@@ -355,10 +377,10 @@ export const MODULES: Record<string, ModuleConfig> = {
     channelReactions: true,
     settingsPresets: true,
     launchStats: true,
-    historySection: 'История реакций',
+    historySection: 'Логи реакций',
     blacklistSection: 'Чёрный список каналов',
     counters: [{ label: 'групп', value: '93' }, { label: 'интервал', value: '120с' }, { label: 'цель', value: '100' }],
-    primaryAction: 'Запустить реакции',
+    primaryAction: 'Начать',
     secondaryAction: 'Сохранить текущие настройки',
     stopAction: 'Остановить реакции',
     logSeedCount: 142,
@@ -385,13 +407,8 @@ export const MODULES: Record<string, ModuleConfig> = {
       { label: 'Истории + посты', value: 'both' },
     ],
     lookPostsLabel: 'Сколько последних постов смотреть',
-    lookPostsPresets: [
-      { label: 'Самый новый', value: 1 },
-      { label: 'Последние 3', value: 3 },
-      { label: 'Последние 10', value: 10 },
-    ],
     lookPostsDefault: 3,
-    primaryAction: 'Запустить просмотр',
+    primaryAction: 'Начать',
     stopAction: 'Остановить',
     logSeedCount: 0,
     logEmpty: '',
@@ -403,12 +420,15 @@ export const MODULES: Record<string, ModuleConfig> = {
     accent: 'spark',
     warmingLayout: true,
     aiProtection: true,
+    // Числа действий у прогрева больше нет: срок задаётся ДНЯМИ, а сколько это действий,
+    // считает темп уровня (правка 27.08). Свободное число ломало смысл: жребий из [min,max]
+    // мог дать единицы, и «двухдневный прогрев» заканчивался к обеду.
     selectedTitle: 'Выбрано для прогрева',
     accountPicker: true,
     accountActions: ['Добавить все', 'Удалить все'],
     accountFilters: true,
     seedTargetCount: 93,
-    primaryAction: 'Начать прогрев',
+    primaryAction: 'Начать',
     stopAction: 'Остановить',
     logSeedCount: 48,
     logEmpty: LOG_EMPTY,
@@ -425,20 +445,20 @@ export const MODULES: Record<string, ModuleConfig> = {
     accountActions: ACC_ACTIONS,
     accountFilters: true,
     messagePrompts: ['Дружелюбный', 'Деловой', 'Продающий', 'Нейтральный'],
-    primaryAction: 'Запустить',
+    primaryAction: 'Начать',
     stopAction: 'Остановить',
     logSeedCount: 53,
     logEmpty: LOG_EMPTY,
   },
   ggr: {
     key: 'ggr',
-    title: 'GGR · GramGPT Рейтинг™',
-    subtitle: 'Оценка качества Telegram-аккаунта',
+    title: 'AIR — AI Rating',
+    subtitle: 'AI-оценка качества Telegram-аккаунта',
     badge: 'БЕТА',
     accent: 'iris',
     ggrLayout: true,
-    settingsTitle: 'Как считается GGR',
-    accountPicker: false,
+    settingsTitle: 'Как считается AIR',
+    accountPicker: true,
     ggrSources: ['Из панели', 'Аудит сетки', '.session', 'tdata'],
     ggrStatuses: ['Все статусы', 'Валидный', 'Заморожен', 'Разавторизирован', 'Невалидный'],
     primaryAction: 'Проверить все',
@@ -462,7 +482,6 @@ export const MODULES: Record<string, ModuleConfig> = {
     resultsTitle: 'Результаты поиска',
     commentFilter: true,
     defaultKeywords: ['массаж', 'СТО', 'нужен разработчик', 'создать бота', 'massage', 'need developer'],
-    aiKeywords: [{ w: 'car service', p: 88 }, { w: 'auto repair', p: 85 }, { w: 'hire developer', p: 87 }, { w: 'create bot', p: 82 }, { w: 'wellness', p: 79 }, { w: 'spa massage', p: 84 }],
     endLangDefault: 'en',
     defaultLimit: '∞',
     defaultActivity: 1,
@@ -472,7 +491,7 @@ export const MODULES: Record<string, ModuleConfig> = {
       { name: 'IT и программирование', desc: 'Технологические каналы и…', kw: 18, chips: ['программирование', 'програмування', 'programming'], extra: 15 },
       { name: 'Крипто и блокчейн', desc: 'Поиск каналов о криптова…', kw: 16, chips: ['крипто', 'криптовалюта', 'bitcoin'], extra: 13 },
     ],
-    primaryAction: 'Запустить парсинг',
+    primaryAction: 'Начать',
     logSeedCount: 0,
     logEmpty: LOG_EMPTY,
   },
@@ -494,7 +513,6 @@ export const MODULES: Record<string, ModuleConfig> = {
     resultsTitle: 'Результаты парсинга',
     commentFilter: false,
     defaultKeywords: ['машина', 'сто', 'жк', 'барбер', 'фуд корт'],
-    aiKeywords: [{ w: 'car', p: 95 }, { w: 'hundred', p: 80 }, { w: 'residential complex', p: 88 }, { w: 'barber', p: 92 }, { w: 'food court', p: 86 }],
     endLangDefault: 'ru',
     defaultLimit: 100,
     defaultActivity: 0,
@@ -530,7 +548,7 @@ export const MODULES: Record<string, ModuleConfig> = {
       profileFilters: [{ label: 'Только с username' }, { label: 'Только с фото' }, { label: 'Только Premium', premium: true }, { label: 'Собирать только админов', admin: true }],
       activeStories: true,
       delays: [{ label: 'Задержка между чатами', value: 5 }, { label: 'Задержка между пользователями', value: 0.5 }],
-      unit: { title: 'Группы', count: 93, limitLabel: 'Лимит участников', limitValue: 1000 },
+      unit: { title: 'Группы', count: 93, limitLabel: 'Лимит участников', limitValue: 1000, limitMin: 1, limitMax: 100000 },
       resultCount: 5,
     },
   },
@@ -554,14 +572,14 @@ export const MODULES: Record<string, ModuleConfig> = {
       sourceHint: 'Введите username, ссылки, ID или инвайт-ссылки на приватные чаты (по одному на строку)',
       formatHint: 'Форматы: @username, t.me/group, t.me/+hash, -1001234567890',
       historyBtn: 'Из истории групп',
-      keywords: { label: 'Ключевые слова', hint: 'Сообщения, содержащие хотя бы одно из этих слов, будут найдены' },
-      limits: [{ label: 'Лимит сообщений', value: 1000, hint: 'Максимальное количество сообщений для анализа в каждом чате (1-50000)' }, { label: 'Фильтр по дням', value: 30, hint: 'Искать сообщения за последние N дней (1-365)' }],
+      keywords: { label: 'Ключевые слова', hint: 'Несколько слов — через точку с запятой «;». Сообщения, содержащие хотя бы одно из них, будут найдены' },
+      limits: [{ label: 'Лимит сообщений', value: 1000, hint: 'Максимальное количество сообщений для анализа в каждом чате (1-50000)', min: 1, max: 50000 }, { label: 'Фильтр по дням', value: 30, hint: 'Искать сообщения за последние N дней (1-365)', min: 1, max: 365 }],
       baseFilters: [{ label: 'Пропустить ботов', on: true }, { label: 'Пропустить удаленных', on: true }, { label: 'Пропустить заблокированных/scam' }],
       profileFilters: [{ label: 'Только с username' }, { label: 'Только с фото' }, { label: 'Только Premium', premium: true }],
       activityFilter: true,
       extraOptions: [{ label: 'Включить ответы', on: true }, { label: 'Включить пересланные сообщения' }],
       delays: [{ label: 'Задержка между чатами', value: 5 }, { label: 'Задержка между сообщениями', value: 0.5 }],
-      unit: { title: 'Чаты', count: 21, limitLabel: 'Лимит сообщений', limitValue: 1000 },
+      unit: { title: 'Чаты', count: 21, limitLabel: 'Лимит сообщений', limitValue: 1000, limitMin: 1, limitMax: 50000 },
       resultCount: 1,
     },
   },
@@ -585,28 +603,40 @@ export const MODULES: Record<string, ModuleConfig> = {
       sourceHint: 'Введите username, ссылки или инвайт-ссылки на приватные каналы (по одному на строку)',
       formatHint: 'Форматы: @channel, t.me/channel, t.me/+hash, -1001234567890',
       historyBtn: 'Из истории каналов',
-      keywords: { label: 'Ключевые слова', hint: 'Фильтровать комментарии по ключевым словам. Если не указано, парсятся все комментарии' },
-      limits: [{ label: 'Лимит постов', value: 50, hint: 'Количество последних постов для анализа в каждом канале (1-500)' }, { label: 'Комментариев на пост', value: 100, hint: 'Максимальное количество комментариев для чтения под каждым постом (1-1000)' }, { label: 'Минимальная длина комментария', value: 10, hint: 'Игнорировать короткие комментарии (символов)' }],
+      keywords: { label: 'Ключевые слова', hint: 'Несколько слов — через точку с запятой «;». Если не указано, парсятся все комментарии' },
+      limits: [{ label: 'Лимит постов', value: 50, hint: 'Количество последних постов для анализа в каждом канале (1-500)', min: 1, max: 500 }, { label: 'Комментариев на пост', value: 100, hint: 'Максимальное количество комментариев для чтения под каждым постом (1-1000)', min: 1, max: 1000 }, { label: 'Минимальная длина комментария', value: 10, hint: 'Игнорировать короткие комментарии (символов)', min: 0, max: 4096 }],
       baseFilters: [{ label: 'Пропустить ботов', on: true }, { label: 'Пропустить удаленных', on: true }, { label: 'Пропустить заблокированных/scam' }, { label: 'Сохранять текст комментария' }],
       profileFilters: [{ label: 'Только с username' }, { label: 'Только с фото' }, { label: 'Только Premium', premium: true }],
       activityFilter: true,
       delays: [{ label: 'Задержка между каналами', value: 5 }, { label: 'Задержка между постами', value: 1 }],
-      unit: { title: 'Каналы', count: 21, limitLabel: 'Лимит постов', limitValue: 50 },
+      unit: { title: 'Каналы', count: 21, limitLabel: 'Лимит постов', limitValue: 50, limitMin: 1, limitMax: 500 },
       resultCount: 289,
     },
   },
 }
 
+// Подписи модулей без data-driven конфига в MODULES (у них свои экраны: рассылка, автопостинг).
+const EXTRA_MODULE_TITLES: Record<string, string> = {
+  mailing: 'Мейлинг',
+  autoposting: 'Автопостинг',
+}
+/** Человеческое имя модуля по ключу: из MODULES, из запасной таблицы, иначе сам ключ. */
+export const moduleTitle = (key: string): string => MODULES[key]?.title || EXTRA_MODULE_TITLES[key] || key
+
 export const ROLES = ['Все роли', 'Чаттинг', 'Комментинг', 'Парсинг', 'Реакции', 'Резерв']
-export const COUNTRIES_FILTER = [
-  { code: 'all', flag: '', label: 'Все страны' },
-  { code: 'ua', flag: '🇺🇦', label: 'Украина' },
-  { code: 'ru', flag: '🇷🇺', label: 'Россия' },
-  { code: 'kz', flag: '🇰🇿', label: 'Казахстан' },
-  { code: 'pl', flag: '🇵🇱', label: 'Польша' },
-]
+// GEO-модель (§8.3) вынесена в ./geo — регионы Европа+Украина/СНГ. Ре-экспорт для совместимости.
+export { COUNTRIES_FILTER, matchesGeo, FLAGS as GEO_FLAGS, COUNTRY_NAME as GEO_NAMES } from './geo'
 export const LANGUAGES = [
   { code: 'en', flag: '🇬🇧', label: 'English' },
   { code: 'ru', flag: '🇷🇺', label: 'Русский' },
   { code: 'ua', flag: '🇺🇦', label: 'Українська' },
 ]
+
+// #4 (QA): модули с реальными действиями в Telegram — запуск/рестарт требует подтверждения.
+// Безопасные (ggr/парсеры/масслукинг) — без подтверждения.
+export const COMBAT_MODULES = new Set(['neuro-commenting', 'neuro-chatting', 'neuro-dialogs', 'mass-react', 'mailing'])
+export const isCombatModule = (key: string): boolean => COMBAT_MODULES.has(key)
+export const combatConfirmText = (key: string): string =>
+  key === 'mailing'
+    ? 'Мейлинг отправит РЕАЛЬНЫЕ личные сообщения в Telegram (риск бана). Продолжить?'
+    : 'Это выполнит РЕАЛЬНЫЕ действия в Telegram (комментарии/ответы/реакции). Продолжить?'

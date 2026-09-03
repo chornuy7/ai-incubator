@@ -1,13 +1,14 @@
 import { loadSessionString, createClient } from '../tgAuth.js'
 import { getAccountMeta, setAccountMeta } from '../accountsMeta.js'
 import { generateComment, resolveSystemPrompt } from './commentGenerator.js'
+import { buildGoalContext } from '../lib/goalContext.js'
 import {
   fetchChannelPosts,
   sendChannelComment,
   mapTelegramError,
 } from './gramHelpers.js'
 import { prepareTarget } from '../lib/joinTarget.js'
-import { pickCommentCandidates, trackIdlePass } from '../lib/workerLoop.js'
+import { pickCommentCandidates, trackIdlePass, markIdleStop } from '../lib/workerLoop.js'
 import {
   delayMultiplier,
   pickDelay,
@@ -18,11 +19,15 @@ import {
 } from './protection.js'
 import { appendLog, appendCommentHistory, saveTask } from './taskStore.js'
 import { releaseTaskLocks, assertAccountAvailable, markTaskLive, markTaskDone } from '../lib/accountLocks.js'
+import { beginAccountWork, endAccountWork, releaseTaskBusy } from '../lib/accountBusy.js'
 import { resolveDurationPeriodMinutes } from '../lib/workModeDuration.js'
 import { resolveTotalTarget, resolvePerAccountTarget } from '../lib/targets.js'
 import { applyBanPolicy } from '../lib/accountRunner.js'
 import { getAiSafetySync } from '../aiSafety.js'
 import { filterBlacklisted } from '../targetBlacklist.js'
+import { accountFingerprint } from '../lib/deviceFingerprint.js'
+import { accountProxyUrl } from '../proxies.js'
+import { taskErrorText } from '../lib/taskErrors.js'
 
 /** @type {Map<string, Promise<void>>} */
 const running = new Map()
@@ -37,6 +42,9 @@ export function startTaskWorker(task) {
       // Страховка: снять блокировки и сбросить working-статусы на любом терминальном пути,
       // включая ранние return (нет аккаунтов/каналов) и падение процесса воркера.
       releaseTaskLocks(task.id)
+      // Слот занятости — той же страховкой: пропущенный endAccountWork выключает аккаунт
+      // из ВСЕХ модулей, а не только из этого.
+      releaseTaskBusy(task.id)
       try {
         for (const accountId of task.settings?.accountIds || []) {
           const meta = await getAccountMeta(accountId)
@@ -66,7 +74,17 @@ async function runTask(task) {
   await saveTask(task)
   await appendLog(task, 'info', 'Задача запущена', undefined)
 
+  // MR-185: системный промпт берём У ВЛАДЕЛЬЦА ЗАДАЧИ. Раньше он был один на всю
+  // платформу, и правка одного человека уезжала в чужие запуски.
+  const { getUserGlobalPrompt } = await import('../userAiSettings.js')
+  const ownerPrompt = await getUserGlobalPrompt(task.userId).catch(() => '')
+
   const s = task.settings
+  // §9: модуль обязан работать «к цели» — тон, ограничения, база знаний и целевое
+  // действие живут в ней. Раньше этот воркер цель не читал вообще: комментарии шли
+  // по одному лишь промпту карточки, мимо всех правил кампании.
+  const goalCtx = await buildGoalContext(s.goalId || task.goalId)
+  if (goalCtx) await appendLog(task, 'info', 'Комментарии генерируются к выбранной цели (тон и ограничения из неё)', undefined)
   const mul = delayMultiplier(s.protectionLevel ?? 1, s.delayPreset ?? 1)
   const prob = effectiveProbability(s.probability ?? 30, !!s.aiProtection, s.protectionLevel ?? 1)
   // feature 4: цель в диапазоне [minComments, maxComments]
@@ -136,12 +154,23 @@ async function runTask(task) {
         continue
       }
 
+      // Многомодульность (20.08): аккаунт может числиться и в мейлинге, и здесь, но два
+      // действия в одну секунду не делает. Легаси-воркер ходил в сессию мимо реестра
+      // занятости — то есть открывал ВТОРУЮ сессию тем же ключом, пока аккаунтом работал
+      // другой модуль. Занятый пропускаем и берём следующий по кругу, как при усталости.
+      const busyGate = beginAccountWork(accountId, 'neuro-commenting', task.id)
+      if (!busyGate.ok) {
+        await appendLog(task, 'info', `Пропуск: ${busyGate.reason}`, meta.name || accountId)
+        await sleep(800)
+        continue
+      }
+
       let client
       let progressed = false
       try {
         assertAccountAvailable(accountId, task.id)
         await setAccountMeta(accountId, { status: 'working' })
-        client = await createClient(sessionStr, meta.proxy)
+        client = await createClient(sessionStr, await accountProxyUrl(meta), accountFingerprint(accountId, meta))
 
         const channelRaw = channels[Math.floor(Math.random() * channels.length)]
         const joinDelay = pickDelay(s.delays?.join?.[0] ?? 84, s.delays?.join?.[1] ?? 156, mul)
@@ -163,6 +192,8 @@ async function runTask(task) {
           await setAccountMeta(accountId, { status: 'active' })
           if (trackIdlePass(task, false)) {
             await appendLog(task, 'error', 'Остановка: не удалось вступить в канал')
+            // Иначе задача закрывается как «done»: провал выглядел бы успехом (26.08).
+            markIdleStop(task, 'не удалось вступить в канал')
             break
           }
           await saveTask(task)
@@ -198,11 +229,19 @@ async function runTask(task) {
 
           if (task.stopRequested) break
 
-          const { text, mode } = await generateComment(
+          task.usedTexts = task.usedTexts || []
+          const { text, mode, reason } = await generateComment(
             (post.message || '').trim() || (post.media ? '[медиа]' : ''),
             s.promptIndex ?? 0,
-            resolveSystemPrompt(s),
+            resolveSystemPrompt(s, ownerPrompt) + goalCtx,
+            { avoid: task.usedTexts },
           )
+          // Мёртвый ключ — стоп всей задаче: шаблон от лица живых аккаунтов это спам-блок.
+          if (mode === 'fatal') {
+            await appendLog(task, 'error', `ИИ недоступен: ${reason}. Задача остановлена — комментарии без ИИ не публикуем.`, meta.name || accountId)
+            task.stopRequested = true
+            break
+          }
           if (mode !== 'openai') {
             const hint = mode === 'template_no_key'
               ? 'Шаблон (нет OPENAI_API_KEY в .env)'
@@ -229,6 +268,8 @@ async function runTask(task) {
               comment: text,
               status: 'sent',
             })
+            task.usedTexts.push(text)
+            if (task.usedTexts.length > 50) task.usedTexts.shift()
             await appendLog(task, 'success', `Комментарий отправлен: «${text.slice(0, 60)}…»`, meta.name || accountId)
           } catch (err) {
             const floodSec = extractFloodSeconds(err)
@@ -279,6 +320,10 @@ async function runTask(task) {
         const banned = await getAccountMeta(accountId)
         if (banned.status === 'working') await setAccountMeta(accountId, { status: 'active' })
         await saveTask(task)
+      } finally {
+        // Один выход на все пути (в т.ч. break из середины круга): иначе слот остаётся за
+        // мёртвой задачей и аккаунт выпадает из всех модулей.
+        endAccountWork(accountId, task.id)
       }
 
       if (task.stopRequested) break
@@ -300,12 +345,13 @@ async function runTask(task) {
     await appendLog(task, 'info', task.status === 'done' ? 'Задача завершена' : 'Задача остановлена')
   } catch (err) {
     task.status = 'error'
-    await appendLog(task, 'error', err instanceof Error ? err.message : 'Критическая ошибка')
+    await appendLog(task, 'error', taskErrorText(err, 'нейрокомментинг'))
   }
 
   await saveTask(task)
 
   releaseTaskLocks(task.id)
+  releaseTaskBusy(task.id)
   for (const accountId of accountIds) {
     const meta = await getAccountMeta(accountId)
     if (meta.status === 'working') await setAccountMeta(accountId, { status: 'active' })

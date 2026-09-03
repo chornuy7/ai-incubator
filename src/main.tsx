@@ -4,6 +4,14 @@ import { BrowserRouter } from 'react-router-dom'
 import App from './App'
 import './index.css'
 import { useApp } from '@/mocks/store'
+import { installFetchAuth } from '@/shared/lib/fetchAuth'
+import { installTooltips } from '@/shared/lib/tooltips'
+
+// Токен сессии — на КАЖДЫЙ запрос к /api (иначе прод-замок 401-ит прямые fetch).
+installFetchAuth()
+
+// Подсказки одного вида на всё приложение вместо нативных плашек браузера.
+installTooltips()
 
 // Применяем сохранённую тему до первого рендера
 const theme = useApp.getState().theme

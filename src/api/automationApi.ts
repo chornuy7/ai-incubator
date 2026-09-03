@@ -1,4 +1,4 @@
-import { apiGet, apiPost } from './client'
+import { apiGet, apiPost, apiPut, apiDelete } from './client'
 import type { ModuleTaskSettings } from './modulesApi'
 
 export interface AutomationSchedule {
@@ -13,6 +13,7 @@ export interface AutomationRule {
   name: string
   enabled: boolean
   moduleKey: string
+  campaignId?: string | null // §6: правило под кампанией
   accountIds: string[]
   settings: Partial<ModuleTaskSettings>
   schedule: AutomationSchedule
@@ -24,7 +25,7 @@ export interface AutomationRule {
   updatedAt: number
 }
 
-export type AutomationRuleInput = Pick<AutomationRule, 'name' | 'moduleKey' | 'accountIds' | 'settings' | 'schedule'> & {
+export type AutomationRuleInput = Pick<AutomationRule, 'name' | 'moduleKey' | 'campaignId' | 'accountIds' | 'settings' | 'schedule'> & {
   enabled?: boolean
 }
 
@@ -39,20 +40,12 @@ export async function createAutomationRule(input: AutomationRuleInput): Promise<
 }
 
 export async function updateAutomationRule(id: string, patch: Partial<AutomationRuleInput>): Promise<AutomationRule> {
-  const res = await fetch(`/api/automation/rules/${id}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(patch),
-  })
-  const data = await res.json()
-  if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`)
-  return data.rule as AutomationRule
+  const data = await apiPut<{ ok: boolean; rule: AutomationRule }>(`/api/automation/rules/${id}`, patch)
+  return data.rule
 }
 
 export async function deleteAutomationRule(id: string): Promise<void> {
-  const res = await fetch(`/api/automation/rules/${id}`, { method: 'DELETE' })
-  const data = await res.json()
-  if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`)
+  await apiDelete(`/api/automation/rules/${id}`)
 }
 
 export async function runAutomationRuleNow(id: string): Promise<string> {

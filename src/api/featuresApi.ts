@@ -1,4 +1,4 @@
-import { apiGet, apiPost } from './client'
+import { apiGet, apiPost, apiPut, apiDelete } from './client'
 
 // ── (6) Глобальный системный промпт ────────────────────────────────────
 export interface AiSettings {
@@ -55,14 +55,10 @@ export async function addBlacklistEntry(entry: string | string[]): Promise<strin
 }
 
 export async function removeBlacklistEntry(entry: string): Promise<string[]> {
-  const res = await fetch('/api/target-blacklist', {
-    method: 'DELETE',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ entry }),
-  })
-  const data = await res.json()
-  if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`)
-  return data.entries as string[]
+  // §12 (MR-58): через apiDelete (с auth-заголовками). Голый fetch без них не проходил
+  // серверную проверку на проде → запись из ЧС не удалялась (добавить можно, убрать нет).
+  const data = await apiDelete<{ entries: string[] }>('/api/target-blacklist', { entry })
+  return data.entries
 }
 
 // ── (5) Папки списков целей ─────────────────────────────────────────────
@@ -85,20 +81,17 @@ export async function createFolder(name: string, targets: string[]): Promise<Tar
 }
 
 export async function updateFolder(id: string, patch: { name?: string; targets?: string[] }): Promise<TargetFolder> {
-  const res = await fetch(`/api/target-folders/${id}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(patch),
-  })
-  const data = await res.json()
-  if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`)
-  return data.folder as TargetFolder
+  // §12 (MR-57): через apiPut — с auth-заголовками (Authorization + X-User-Id). Голый fetch
+  // без них на проде (SESSION_SECRET) не проходил серверную проверку → переименование/дозапись
+  // «не работали». Теперь как все остальные вызовы.
+  const data = await apiPut<{ folder: TargetFolder }>(`/api/target-folders/${id}`, patch)
+  return data.folder
 }
 
 export async function deleteFolder(id: string): Promise<void> {
-  const res = await fetch(`/api/target-folders/${id}`, { method: 'DELETE' })
-  const data = await res.json()
-  if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`)
+  // §12 (MR-57): через apiDelete — с auth-заголовками; голый fetch без них не проходил и
+  // удаление молча не срабатывало.
+  await apiDelete(`/api/target-folders/${id}`)
 }
 
 export interface ValidateResult { checked: number; kept: number; removed: number; folder: TargetFolder }
@@ -107,4 +100,26 @@ export interface ValidateResult { checked: number; kept: number; removed: number
 export async function validateFolder(id: string): Promise<ValidateResult> {
   const data = await apiPost<ValidateResult>(`/api/target-folders/${id}/validate`)
   return data
+}
+
+// ── MR-185: тексты промптов модулей — из базы, по владельцу ─────────────
+//
+// Раньше лежали в памяти браузера без имени владельца: правка одного человека
+// доставалась всем, кто заходит с этого компьютера, а со своего второго устройства он
+// своих правок не видел. Теперь владелец берётся из сессии на сервере.
+
+/** Изменённые промпты текущего пользователя: номер карточки → текст. Заводские не приходят. */
+export async function fetchUserPrompts(moduleKey: string): Promise<Record<number, string>> {
+  const data = await apiGet<{ prompts: Record<string, string> }>(`/api/prompts?moduleKey=${encodeURIComponent(moduleKey)}`)
+  const out: Record<number, string> = {}
+  for (const [k, v] of Object.entries(data.prompts || {})) out[Number(k)] = String(v)
+  return out
+}
+
+/**
+ * Сохранить набор карточек модуля. Шлём ПОЛНЫЙ список и заводские тексты рядом: сервер
+ * сам отличит изменённое от возвращённого к заводскому и не станет хранить копии дефолтов.
+ */
+export async function saveUserPrompts(moduleKey: string, bodies: string[], defaults: string[]): Promise<void> {
+  await apiPut('/api/prompts', { moduleKey, bodies, defaults })
 }

@@ -1,0 +1,46 @@
+# Миграции, накатанные ВРУЧНУЮ через SQL Editor до появления npm run migrate.
+# Прогонятор при пустом учёте отмечает их как применённые, НЕ выполняя: среди них есть
+# неидемпотентные (с drop), и повторное применение снесло бы данные.
+#
+# Список закрыт: всё, чего в нём нет, прогонятор применяет обычным порядком.
+# Дописывать сюда ничего не нужно — новые миграции едут сами.
+# Составлен 26.08.2026, состояние базы подтверждено владельцем.
+2026-07-30-messages.sql
+2026-07-30-module-links.sql
+2026-07-30-owner-and-types.sql
+2026-07-30-owner-rest.sql
+2026-07-30-owner-stores.sql
+2026-07-30-price-periods.sql
+2026-07-30-profiles-trigger.sql
+2026-07-30-profiles.sql
+2026-07-30-remaining-stores.sql
+2026-07-30-usd-wallet.sql
+2026-07-31-indexes.sql
+2026-07-31-lead-source.sql
+2026-07-31-profiles-stage1.sql
+2026-07-31-profiles-stage3-fk.sql
+2026-07-31-rls.sql
+2026-07-31-wallet-currency.sql
+2026-08-03-drop-users-stage4.sql
+2026-08-04-audit-log.sql
+2026-08-04-owner-sync.sql
+2026-08-04-sub-balance.sql
+2026-08-04-subuser-grants.sql
+2026-08-12-access-rules.sql
+2026-08-18-module-actions.sql
+2026-08-19-bundles-drop-user-id.sql
+2026-08-19-rls-policies.sql
+2026-08-20-max-action-cost.sql
+2026-08-20-model-prices.sql
+2026-08-20-setups.sql
+2026-08-20-strict-prices.sql
+2026-08-21-subscription-credit.sql
+2026-08-22-drop-subscriptions-modules.sql
+2026-08-22-max-cost-image.sql
+2026-08-22-user-subscriptions.sql
+2026-08-22-wallet-kind.sql
+2026-08-24-parser-cache.sql
+2026-08-24-parser-watch.sql
+2026-08-24-payments.sql
+2026-08-24-user-prompts.sql
+2026-08-25-user-gifts.sql

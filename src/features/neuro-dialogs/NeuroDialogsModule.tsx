@@ -1,124 +1,77 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
-  Play, Sparkles, Search, Send, MessagesSquare, Mail, Users,
-  RefreshCw, Loader2, ChevronDown, ExternalLink,
+  Sparkles, MessagesSquare, Mail, Users,
+  ChevronDown, Check, Image as ImageIcon,
 } from 'lucide-react'
 import { MODULES } from '@/shared/config/modules'
+import { isHidden } from '@/shared/config/routes'
 import { useApp } from '@/mocks/store'
-import { Avatar, Badge, Segmented, Switch } from '@/shared/ui'
-import { LogsPanel } from '@/widgets/LogsPanel'
+import { Badge, Switch, Select, Segmented } from '@/shared/ui'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
+import { fetchGoals, type Goal } from '@/api/goalsApi'
+import { fetchPricing } from '@/api/balanceApi'
 import { cn } from '@/shared/lib/utils'
-import {
-  fetchInbox,
-  fetchMessages,
-  sendDialogMessage,
-  markDialogRead,
-  type InboxDialog,
-  type DialogMessage,
-} from '@/api/neuroDialogsApi'
+// Из API диалогов модулю нужен только СПИСОК: он показывает сводку «сколько диалогов и
+// непрочитанных», а читают и отвечают руками на «Обзоре аккаунта».
+import { fetchInbox, type InboxDialog } from '@/api/neuroDialogsApi'
 import { useModuleTask } from '@/features/modules/shared/useModuleTask'
+import { PresetBar } from '@/features/modules/shared/PresetBar'
+import { SavePresetModal, presetSettings } from '@/features/modules/shared/SavePresetModal'
 import {
   SectionCard,
   HelpButton,
+  NumberField,
   LaunchPanel,
+  LaunchSteps,
+  markCurrentStep,
   PromptCards,
-  loadPromptBodies,
-  ProtectionBlock,
+  usePromptStore,
+  ProtectionTimings,
   AiGenerationNotice,
-  TimingSection,
+  TaskStartedModal,
+  usePresetCarry,
   type DelaysShape,
+  ProtectionLevelPicker,
 } from '@/features/modules/shared'
-import type { ModuleTaskSettings } from '@/api/modulesApi'
+import { PROTECTION_CAP } from '@/features/modules/shared/ProtectionLevelPicker'
+import type { ModuleTaskSettings, ModulePresetSettings } from '@/api/modulesApi'
 
 const cfg = MODULES['neuro-dialogs']!
 
-const GOAL_KEY = 'neuro-dialogs:goal'
-const SCOPE_KEY = 'neuro-dialogs:replyAll'
+/*
+ * MR-186: настройки модуля НЕ живут в браузере.
+ *
+ * Раньше «отвечать всем», цель диалога, разбор картинок и выбранная цель кампании
+ * запоминались в localStorage. На общем компьютере они доставались следующему человеку,
+ * а со своего второго устройства он их не видел вовсе. При этом все эти поля и так
+ * уходят в настройки задачи и восстанавливаются из шаблона — а шаблоны с 26.08 лежат
+ * в общей базе. Второе хранилище было лишним и мешало.
+ */
 
-function peerRef(d: Pick<InboxDialog, 'peerId' | 'accessHash' | 'username'>) {
-  return { peerId: d.peerId, accessHash: d.accessHash, username: d.username || undefined }
-}
 
-function avatarColor(name: string) {
-  const palette = ['#7145ff', '#06b6d4', '#0ec464', '#f59e0b', '#ec4899', '#229ED9']
-  let h = 0
-  for (let i = 0; i < name.length; i++) h = (h + name.charCodeAt(i) * 17) % palette.length
-  return palette[h]
-}
 
-const DialogRow = memo(function DialogRow({
-  d,
-  active,
-  onClick,
-}: {
-  d: InboxDialog
-  active: boolean
-  onClick: () => void
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      style={{ contentVisibility: 'auto', containIntrinsicSize: '0 72px' }}
-      className={cn(
-        'flex w-full items-center gap-3 border-b border-line/50 p-3 text-left transition-colors hover:bg-elevated',
-        active && 'bg-iris-500/10',
-        d.error && 'opacity-60',
-      )}
-    >
-      <Avatar name={d.name} color={avatarColor(d.name)} size={42} />
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center justify-between gap-2">
-          <span className="truncate text-sm font-bold text-fg">{d.name}</span>
-          <span className="shrink-0 text-[11px] text-faint">{d.time}</span>
-        </div>
-        <div className="truncate text-xs text-muted">{d.last || '—'}</div>
-        <div className="truncate text-[11px] text-iris-300/80">
-          {d.accountName}{d.username ? ` · @${d.username}` : ''}
-        </div>
-      </div>
-      {d.unread > 0 && (
-        <span className="grid h-5 min-w-[20px] shrink-0 place-items-center rounded-full bg-rose-500 px-1 text-[11px] font-bold text-white">
-          {d.unread > 99 ? '99+' : d.unread}
-        </span>
-      )}
-    </button>
-  )
-})
 
-const MessageBubble = memo(function MessageBubble({ m }: { m: DialogMessage }) {
-  return (
-    <div className={cn('flex', m.out ? 'justify-end' : 'justify-start')}>
-      <div
-        className={cn(
-          'max-w-[78%] rounded-2xl px-3.5 py-2 text-sm leading-relaxed',
-          m.out ? 'bg-iris-gradient text-white' : 'border border-line bg-surface text-fg',
-        )}
-      >
-        <span className="whitespace-pre-wrap break-words">{m.text}</span>
-        <span className={cn('mt-1 block text-[10px]', m.out ? 'text-white/70' : 'text-faint')}>{m.time}</span>
-      </div>
-    </div>
-  )
-})
 
 export function NeuroDialogsModule() {
   const pushToast = useApp((s) => s.pushToast)
-  const { task, running, starting, start, stop, savePreset, deletePreset, presets } = useModuleTask('neuro-dialogs')
+  const { task, running, starting, start, stop, savePreset, deletePreset, editPreset, presets, justStarted, dismissJustStarted } = useModuleTask('neuro-dialogs')
 
   const [selected, setSelected] = useState<Set<string>>(new Set())
-  const [viewTab, setViewTab] = useState(0)
   const [aiOpen, setAiOpen] = useState(true)
   const [aiEnabled, setAiEnabled] = useState(true)
-  const [replyAll, setReplyAll] = useState(() => localStorage.getItem(SCOPE_KEY) === '1')
-  const [dialogGoal, setDialogGoal] = useState(() => localStorage.getItem(GOAL_KEY) ?? '')
+  const [replyAll, setReplyAll] = useState(false)
+  const [dialogGoal, setDialogGoal] = useState('')
+  const [analyzeImages, setAnalyzeImages] = useState(false) // §10.5
+  const [imageMult, setImageMult] = useState<number | null>(null) // §10.5: наценка «картинка ×N» из админки
+  const [goals, setGoals] = useState<Goal[]>([])
+  const [goalId, setGoalId] = useState('') // §9: цель кампании
   const [aiProtect, setAiProtect] = useState(true)
   const [protLevel, setProtLevel] = useState(1)
+  // §11: вероятность ответа — как в остальных модулях (просьба владельца 26.08).
+  const [probability, setProbability] = useState(100)
   const [activePrompt, setActivePrompt] = useState(0)
-  const [promptBodies, setPromptBodies] = useState(() =>
-    loadPromptBodies('neuro-dialogs', cfg.messagePrompts ?? []),
-  )
+  // MR-185: промпты из базы, по владельцу (см. LiveModule).
+  const { bodies: promptBodies, saveCard: savePromptCard, replace: replacePrompts } = usePromptStore('neuro-dialogs', cfg.messagePrompts ?? [])
   // Лимиты для ЛС. Важно: общий лимит и лимит на аккаунт — это ДИАПАЗОН [min, max],
   // из которого воркер берёт случайное число (антидетект). Для авто-ответчика min по умолчанию
   // равен max, иначе цель могла бы выпасть в 0–1 и задача завершалась бы после первого ответа.
@@ -128,6 +81,9 @@ export function NeuroDialogsModule() {
   const [minActions, setMinActions] = useState(50)
   const [maxPerAcc, setMaxPerAcc] = useState(50)
   const [minPerAcc, setMinPerAcc] = useState(50)
+  // §9: лимит переписки с ОДНИМ лидом. По умолчанию — вести до целевого действия.
+  const [replyLimitMode, setReplyLimitMode] = useState<'untilTarget' | 'count'>('untilTarget')
+  const [maxRepliesPerLead, setMaxRepliesPerLead] = useState(5)
   const [delayPreset, setDelayPreset] = useState(1)
   const [delays, setDelays] = useState<DelaysShape>({
     comment: [30, 120],
@@ -137,40 +93,26 @@ export function NeuroDialogsModule() {
     floodQuarantine: 3,
   })
 
-  const [search, setSearch] = useState('')
   const [dialogs, setDialogs] = useState<InboxDialog[]>([])
-  const [inboxLoading, setInboxLoading] = useState(false)
-  const [activeKey, setActiveKey] = useState<string | null>(null)
-  const [messages, setMessages] = useState<DialogMessage[]>([])
-  const [msgsLoading, setMsgsLoading] = useState(false)
-  const [reply, setReply] = useState('')
-  const [sending, setSending] = useState(false)
 
-  const msgCache = useRef<Map<string, DialogMessage[]>>(new Map())
-  const scrollRef = useRef<HTMLDivElement>(null)
   const accountIds = useMemo(() => [...selected], [selected])
 
-  const activeDialog = useMemo(
-    () => dialogs.find((d) => d.key === activeKey) ?? null,
-    [dialogs, activeKey],
-  )
-
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase()
-    if (!q) return dialogs
-    return dialogs.filter(
-      (d) =>
-        `${d.name} ${d.last} ${d.username} ${d.accountName}`.toLowerCase().includes(q),
-    )
-  }, [dialogs, search])
 
   const totalUnread = useMemo(() => dialogs.reduce((s, d) => s + (d.unread || 0), 0), [dialogs])
+  // §10.5: подтягиваем актуальную наценку за изображение — показать «×N» у тумблера.
+  useEffect(() => { void fetchPricing().then((p) => setImageMult(p.imageMultiplier ?? null)).catch(() => {}) }, [])
+  useEffect(() => { void fetchGoals().then(setGoals).catch(() => {}) }, [])
 
-  useEffect(() => { localStorage.setItem(GOAL_KEY, dialogGoal) }, [dialogGoal])
-  useEffect(() => { localStorage.setItem(SCOPE_KEY, replyAll ? '1' : '0') }, [replyAll])
+  const { carry, remember } = usePresetCarry()
+
+  // MR-251: уведомления о статусе ЗАДАЧИ живут у запуска и включены по умолчанию
+  // (владелец 30.08: «они имеют отношение только к задаче»).
+  const [notifyStatus, setNotifyStatus] = useState(true)
 
   const buildSettings = useCallback((): ModuleTaskSettings => ({
+    ...carry(), // параметры шаблона, которым нет ручки в форме (threads/typeWeights у MCP-задач)
     accountIds,
+    notifyOnStatus: notifyStatus,
     aiProtection: aiProtect,
     protectionLevel: protLevel,
     promptIndex: activePrompt,
@@ -182,16 +124,29 @@ export function NeuroDialogsModule() {
     minPerAccount: minPerAcc,
     delayPreset,
     delays,
-    probability: aiEnabled ? 100 : 0,
+    /*
+     * probability тут раньше подменял тумблер «Отвечать на входящие автоматически»:
+     * слался как 100/0, а воркер поле НЕ ЧИТАЛ — то есть выключатель ничего не выключал.
+     * Теперь это настоящая вероятность ответа с ползунка, а выключенный ИИ даёт ноль,
+     * который воркер понимает как «отвечать не надо» и честно закрывает задачу.
+     */
+    probability: aiEnabled ? probability : 0,
     replyScope: replyAll ? 'all' : 'unread',
     dialogGoal: dialogGoal.trim(),
-  }), [accountIds, aiProtect, protLevel, activePrompt, promptBodies, maxActions, minActions, maxPerAcc, minPerAcc, delayPreset, delays, aiEnabled, replyAll, dialogGoal])
+    analyzeImages, // §10.5: описывать входящие фото vision-моделью
+    // §9: сколько сообщений пишем ОДНОМУ лиду — числом или до целевого действия.
+    replyLimitMode,
+    maxRepliesPerLead: replyLimitMode === 'count' ? maxRepliesPerLead : 0,
+    ...(goalId ? { goalId } : {}), // §9: привязка диалога к цели кампании (наследует KB/этапы, лиды к цели)
+  }), [carry, accountIds, aiProtect, protLevel, activePrompt, promptBodies, maxActions, minActions, maxPerAcc, minPerAcc, delayPreset, delays, aiEnabled, probability, replyAll, dialogGoal, analyzeImages, goalId, replyLimitMode, maxRepliesPerLead, notifyStatus])
 
-  const applyPreset = useCallback((s: ModuleTaskSettings) => {
+  const applyPreset = useCallback((s: ModulePresetSettings) => {
+    if (s.notifyOnStatus !== undefined) setNotifyStatus(s.notifyOnStatus)
+    remember(s)
     if (s.aiProtection !== undefined) setAiProtect(s.aiProtection)
     if (s.protectionLevel !== undefined) setProtLevel(s.protectionLevel)
     if (s.promptIndex !== undefined) setActivePrompt(s.promptIndex)
-    if (Array.isArray(s.promptOverrides)) setPromptBodies(s.promptOverrides)
+    if (Array.isArray(s.promptOverrides)) replacePrompts(s.promptOverrides)
     if (s.maxActions !== undefined) setMaxActions(s.maxActions)
     if (s.minActions !== undefined) setMinActions(s.minActions)
     if (s.maxPerAccount !== undefined) setMaxPerAcc(s.maxPerAccount)
@@ -201,16 +156,18 @@ export function NeuroDialogsModule() {
     if (s.probability !== undefined) setAiEnabled(s.probability > 0)
     if (s.replyScope) setReplyAll(s.replyScope === 'all')
     if (typeof s.dialogGoal === 'string') setDialogGoal(s.dialogGoal)
-    pushToast({ type: 'success', title: 'Пресет применён' })
-  }, [pushToast])
+    if (typeof s.analyzeImages === 'boolean') setAnalyzeImages(s.analyzeImages)
+    if (typeof s.goalId === 'string') setGoalId(s.goalId)
+    if (s.replyLimitMode === 'count' || s.replyLimitMode === 'untilTarget') setReplyLimitMode(s.replyLimitMode)
+    if (typeof s.maxRepliesPerLead === 'number' && s.maxRepliesPerLead > 0) setMaxRepliesPerLead(s.maxRepliesPerLead)
+    pushToast({ type: 'success', title: 'Шаблон применён' })
+  }, [pushToast, remember, replacePrompts])
 
-  const loadInbox = useCallback(async (silent = false) => {
+  const loadInbox = useCallback(async () => {
     if (!accountIds.length) {
       setDialogs([])
-      msgCache.current.clear()
       return
     }
-    if (!silent) setInboxLoading(true)
     try {
       const res = await fetchInbox(accountIds, 120)
       setDialogs(res.dialogs.filter((d) => !d.error))
@@ -220,93 +177,157 @@ export function NeuroDialogsModule() {
         title: 'Не удалось загрузить диалоги',
         desc: err instanceof Error ? err.message : 'Ошибка',
       })
-    } finally {
-      if (!silent) setInboxLoading(false)
     }
   }, [accountIds, pushToast])
 
-  const openDialog = useCallback(async (d: InboxDialog) => {
-    if (d.error || !d.peerId) return
-    setActiveKey(d.key)
-    setDialogs((list) => list.map((x) => (x.key === d.key ? { ...x, unread: 0 } : x)))
 
-    const cached = msgCache.current.get(d.key)
-    if (cached) {
-      setMessages(cached)
-      requestAnimationFrame(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight }))
-      void markDialogRead(d.accountId, peerRef(d)).catch(() => {})
-      return
-    }
-
-    setMsgsLoading(true)
-    try {
-      const res = await fetchMessages(d.accountId, peerRef(d), 80)
-      msgCache.current.set(d.key, res.messages)
-      setMessages(res.messages)
-      void markDialogRead(d.accountId, peerRef(d)).catch(() => {})
-      requestAnimationFrame(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight }))
-    } catch (err) {
-      pushToast({
-        type: 'error',
-        title: 'Ошибка загрузки переписки',
-        desc: err instanceof Error ? err.message : 'Ошибка',
-      })
-      setMessages([])
-    } finally {
-      setMsgsLoading(false)
-    }
-  }, [pushToast])
-
-  const send = useCallback(async () => {
-    if (!reply.trim() || !activeDialog?.peerId) return
-    const text = reply.trim()
-    setSending(true)
-    setReply('')
-    try {
-      const res = await sendDialogMessage(activeDialog.accountId, peerRef(activeDialog), text)
-      setMessages((prev) => {
-        const next = [...prev, res.message]
-        msgCache.current.set(activeDialog.key, next)
-        return next
-      })
-      setDialogs((list) =>
-        list.map((d) => (d.key === activeDialog.key ? { ...d, last: text, time: 'сейчас' } : d)),
-      )
-      requestAnimationFrame(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight }))
-    } catch (err) {
-      setReply(text)
-      pushToast({
-        type: 'error',
-        title: 'Не отправлено',
-        desc: err instanceof Error ? err.message : 'Ошибка',
-      })
-    } finally {
-      setSending(false)
-    }
-  }, [reply, activeDialog, pushToast])
 
   useEffect(() => {
     void loadInbox()
   }, [loadInbox])
 
   useEffect(() => {
-    if (!accountIds.length || viewTab !== 0) return
-    const t = setInterval(() => void loadInbox(true), 25_000)
+    if (!accountIds.length) return
+    const t = setInterval(() => void loadInbox(), 25_000)
     return () => clearInterval(t)
-  }, [accountIds.length, viewTab, loadInbox])
+  }, [accountIds.length, loadInbox])
 
   const canStart = accountIds.length > 0
-  const logs = task?.logs ?? []
+
+  // §10: сохранение через модалку (имя + цвет + владелец), как в остальных модулях.
+  const [presetModalOpen, setPresetModalOpen] = useState(false)
+  const handleSavePreset = () => setPresetModalOpen(true)
 
   return (
     <div className="space-y-4">
-      <AccountPicker
-        selected={selected}
-        onChange={setSelected}
-        actions={cfg.accountActions}
-        withFilters={!!cfg.accountFilters}
-        selectedTitle={cfg.selectedTitle ?? 'Выбрано'}
-      />
+      <TaskStartedModal task={justStarted} moduleTitle={cfg.title} onClose={dismissJustStarted} />
+      <SavePresetModal open={presetModalOpen} onClose={() => setPresetModalOpen(false)}
+        onSave={(name, color, owner, withAccounts) => savePreset(name, presetSettings(buildSettings(), withAccounts), color, owner)} />
+      {/* ТЗ 06.08 §10: выбор шаблона — вверху, до всех настроек (TPL-001). */}
+      <PresetBar presets={presets} onApply={applyPreset} onSave={handleSavePreset}
+        onEdit={editPreset} onDelete={deletePreset} disabled={running} />
+      <div id="sec-accounts" className="scroll-mt-24">
+        <AccountPicker
+          selected={selected}
+          onChange={setSelected}
+          actions={cfg.accountActions}
+          withFilters={!!cfg.accountFilters}
+          selectedTitle={cfg.selectedTitle ?? 'Выбрано'}
+        />
+      </div>
+
+      {/*
+        Структура блоков — как у остальных модулей (жалоба владельца 26.08: «там не та
+        структура блоков»). Лимиты переписки — это и есть «Параметры и лимиты», и стоять
+        они должны СРАЗУ после аккаунтов, до промптов и защиты, а не последним блоком:
+        во всех модулях порядок «кем работаем → сколько делаем → чем пишем → как бережём».
+      */}
+      <SectionCard icon={<MessagesSquare size={18} />} title="Параметры и лимиты" id="sec-settings">
+        {/*
+          Уровень защиты переехал сюда (просьба владельца 26.08). Он стоял в блоке
+          авто-ответов, хотя решает не «как отвечать», а СКОЛЬКО: от него зависит, сколько
+          диалогов аккаунт берёт за заход (2/4/6) и во сколько раз растянуты паузы. Это
+          объём работы — место ему в лимитах, рядом с остальными числами.
+        */}
+        <div className="mb-3">
+          <ProtectionLevelPicker
+            value={protLevel}
+            onChange={setProtLevel}
+            note={`Аккаунт отвечает не более чем в ${[2, 4, 6][protLevel]} диалогах за заход.`}
+          />
+        </div>
+
+        {/*
+          Вероятность ответа. Промах здесь настоящий, а не отложенный, как в мейлинге:
+          диалог никуда не девается — он останется в списке ждущих и попадёт в следующий
+          круг. Бот, отвечающий на всё подряд и мгновенно, узнаётся именно по стопроцентной явке.
+        */}
+        <div className="mb-3 rounded-2xl border border-line bg-elevated/40 p-3">
+          <div className="mb-1 flex justify-between text-sm text-muted">
+            <span>Вероятность ответа</span>
+            <span className="text-spark-300">{probability}%</span>
+          </div>
+          <input type="range" min={10} max={100} value={probability} onChange={(e) => setProbability(Number(e.target.value))} className="w-full accent-spark-500" />
+          <p className="mt-1.5 text-[11px] leading-relaxed text-white/45">
+            Доля диалогов, на которые аккаунт отвечает за один заход. Пропущенный диалог не теряется — он
+            остаётся ждать и попадёт в следующий круг.
+          </p>
+          {probability > PROTECTION_CAP[protLevel] && (
+            <p className="mt-1.5 text-[11px] text-amber-300">
+              Защита ограничивает: фактически будет <b>{PROTECTION_CAP[protLevel]}%</b>. Снять потолок — уровнем защиты ниже.
+            </p>
+          )}
+        </div>
+
+        <div className="mb-3 text-xs text-white/40">Сколько сообщений ведём с ОДНИМ лидом.</div>
+        <div className="flex flex-col gap-3">
+          <Segmented
+            options={['До целевого действия', 'Фиксировано']}
+            value={replyLimitMode === 'untilTarget' ? 0 : 1}
+            onChange={(i) => setReplyLimitMode(i === 0 ? 'untilTarget' : 'count')}
+          />
+          {replyLimitMode === 'untilTarget' ? (
+            <p className="rounded-xl border border-spark-500/25 bg-spark-500/8 px-3 py-2 text-xs leading-relaxed text-muted">
+              ИИ ведёт диалог, пока лид не выполнит целевое действие цели (статус «Целевое») —
+              или пока не откажется («Закрыт»). Останавливают только суточные лимиты и защита.
+            </p>
+          ) : (
+            <div className="flex flex-col gap-2">
+              <NumberField label="Максимум ответов одному лиду" value={maxRepliesPerLead} onChange={setMaxRepliesPerLead} min={1} max={50} suffix="1–50" />
+              <p className="rounded-xl border border-line bg-elevated/60 px-3 py-2 text-xs leading-relaxed text-muted">
+                После {maxRepliesPerLead} {maxRepliesPerLead === 1 ? 'ответа' : 'ответов'} диалог с этим человеком не продолжаем,
+                даже если он пишет снова. Полезно, чтобы не «переписываться вечно».
+              </p>
+            </div>
+          )}
+          <p className="text-xs text-white/40">
+            В обоих режимах отказ («не пиши мне») сразу закрывает лида — больше ему не пишем.
+          </p>
+        </div>
+      </SectionCard>
+
+      <p className="rounded-xl border border-line bg-elevated/60 px-3 py-2 text-xs leading-relaxed text-muted">
+        «Ответов за запуск» и «На аккаунт» — это диапазон: воркер берёт случайное число между «от» и «до» (для маскировки под живого человека).
+        Если поставить «от» = 0, задача может случайно завершиться после первого же ответа. По умолчанию «от» = «до», то есть лимит фиксированный.
+      </p>
+
+      {/* Промпты — выше защиты и таймингов, как во всех модулях (правка 19.08). */}
+      {cfg.messagePrompts && (
+        <SectionCard icon={<Sparkles size={18} />} title="AI / промпты">
+          <div className="space-y-3">
+            <AiGenerationNotice />
+            <PromptCards
+              labels={cfg.messagePrompts}
+              activeIndex={activePrompt}
+              onActiveChange={setActivePrompt}
+              bodies={promptBodies}
+              onSaveCard={savePromptCard}
+            />
+          </div>
+        </SectionCard>
+      )}
+
+      {/* §3 (MR-113 · 17.08): «Защита аккаунтов» — ОТДЕЛЬНЫМ блоком, как во всех модулях
+          (раньше была вложена внутрь «ИИ авто-ответы» — расходилось с единой структурой). */}
+      <div id="sec-protect" className="scroll-mt-24">
+        {/* Один блок на все модули (правка 19.08): защита и задержки — одно решение. */}
+        <ProtectionTimings
+          timing={{
+            totalLabel: 'Ответов за запуск',
+            total: { min: minActions, max: maxActions, onMin: setMinActions, onMax: setMaxActions },
+            perAccount: { min: minPerAcc, max: maxPerAcc, onMin: setMinPerAcc, onMax: setMaxPerAcc },
+            delays,
+            onDelays: (updater) => setDelays(updater),
+            showComment: false,
+            showAction: true,
+            showJoin: false,
+            labels: { action: 'Задержка между ответами' },
+            delayPresets: ['Агрессивный', 'Сбалансированный', 'Консервативный'],
+            delayPreset,
+            onDelayPreset: setDelayPreset,
+          }}
+        />
+      </div>
 
       <div className="card p-0">
         <div className="flex items-center gap-3 px-4 py-3.5">
@@ -339,6 +360,24 @@ export function NeuroDialogsModule() {
               desc="Не только новым: ИИ ответит в каждом ЛС, где последнее сообщение от собеседника — даже если оно уже прочитано"
             />
 
+            {/* §10 (MR-49): цели/кампании скрыты глобально — «Цель кампании» прячем вместе с ними.
+                Вернут раздел «Цели» (снимут hidden) — привязка к цели появится снова. */}
+            {!isHidden('/panel/goals') && (
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-sm font-semibold text-fg">Цель кампании <span className="text-[11px] font-normal text-faint">(опционально)</span></span>
+                  <a href="/panel/goals" className="text-[11px] font-semibold text-spark-300 hover:underline">+ Создать цель</a>
+                </div>
+                <Select
+                  value={goalId}
+                  onChange={setGoalId}
+                  placeholder="Без цели"
+                  options={[{ value: '', label: 'Без цели' }, ...goals.map((g) => ({ value: g.id, label: g.name }))]}
+                />
+                <p className="text-[11px] leading-relaxed text-muted">Диалоги привяжутся к цели: ИИ учтёт её этапы и базу знаний, а лиды попадут в CRM к этой цели.</p>
+              </div>
+            )}
+
             <div className="space-y-2">
               <div className="flex items-center justify-between gap-2">
                 <span className="text-sm font-semibold text-fg">Инструкция для ИИ · цель диалога</span>
@@ -360,11 +399,28 @@ export function NeuroDialogsModule() {
               </p>
             </div>
 
+            {/* §10.5: анализ входящих изображений. Отдельный тумблер, т.к. vision дороже
+                текста — расход считается с наценкой «картинка ×N» из админки. */}
+            <button
+              type="button"
+              onClick={() => setAnalyzeImages((v) => !v)}
+              className={`flex w-full items-center gap-3 rounded-xl border p-3 text-left transition-colors ${analyzeImages ? 'border-spark-500/50 bg-spark-500/10' : 'border-line bg-surface hover:border-spark-500/30'}`}
+            >
+              <span className={`grid h-5 w-5 shrink-0 place-items-center rounded-md border ${analyzeImages ? 'border-spark-500 bg-spark-500 text-[#04150c]' : 'border-line'}`}>{analyzeImages && <Check size={13} />}</span>
+              <span className="min-w-0 flex-1">
+                <span className="flex items-center gap-1.5 text-sm font-semibold text-fg"><ImageIcon size={14} className="shrink-0 text-spark-300" /> Анализировать входящие изображения</span>
+                <span className="mt-0.5 block text-[11px] leading-snug text-muted">
+                  Если собеседник прислал фото — ИИ опишет его и учтёт в ответе. Расход vision дороже текста
+                  {imageMult ? <> — <b className="text-fg">×{imageMult}</b> за изображение</> : ' (наценка задаётся в админке)'}.
+                </span>
+              </span>
+            </button>
+
             <p className="rounded-xl border border-line bg-elevated/60 px-3 py-2 text-xs leading-relaxed text-muted">
-              Авто-режим (кнопка «Запустить») отвечает {replyAll
+              Авто-режим (кнопка «Начать») отвечает {replyAll
                 ? <b className="text-fg">всем, кто написал последним</b>
                 : <b className="text-fg">только на непрочитанные входящие ЛС</b>} выбранных аккаунтов — сам первым никому не пишет.
-              Без ключа OpenAI ответы будут шаблонными и цель диалога учтена не будет. Вкладка <b className="text-fg">«Переписки»</b> ниже — ручной инбокс: читайте и отвечайте руками.
+              Без ключа OpenAI ответы будут шаблонными и цель диалога учтена не будет. Переписки читайте и отвечайте вручную в <b className="text-fg">«Обзоре аккаунта»</b>.
             </p>
             {replyAll && (
               <p className="rounded-xl border border-amber-500/30 bg-amber-500/8 px-3 py-2 text-xs leading-relaxed text-amber-200/90">
@@ -373,55 +429,37 @@ export function NeuroDialogsModule() {
                 в секции <b className="text-fg">«Тайминги и задержки»</b> всё равно стоит проверить перед первым запуском.
               </p>
             )}
-            <ProtectionBlock enabled={aiProtect} onEnabled={setAiProtect} level={protLevel} onLevel={setProtLevel} />
-            {cfg.messagePrompts && (
-              <div className="space-y-3">
-                <AiGenerationNotice />
-                <PromptCards
-                moduleKey="neuro-dialogs"
-                labels={cfg.messagePrompts}
-                activeIndex={activePrompt}
-                onActiveChange={setActivePrompt}
-                  onBodiesChange={setPromptBodies}
-                />
-              </div>
-            )}
           </div>
         )}
       </div>
 
-      <TimingSection
-        totalLabel="Ответов за запуск"
-        total={{ min: minActions, max: maxActions, onMin: setMinActions, onMax: setMaxActions }}
-        perAccount={{ min: minPerAcc, max: maxPerAcc, onMin: setMinPerAcc, onMax: setMaxPerAcc }}
-        delays={delays}
-        onDelays={(updater) => setDelays(updater)}
-        showComment={false}
-        showAction
-        showJoin={false}
-        labels={{ action: 'Задержка между ответами' }}
-        delayPresets={['Мин', 'Рекомендуемые', 'Макс']}
-        delayPreset={delayPreset}
-        onDelayPreset={setDelayPreset}
-      />
 
-      <p className="rounded-xl border border-line bg-elevated/60 px-3 py-2 text-xs leading-relaxed text-muted">
-        «Ответов за запуск» и «На аккаунт» — это диапазон: воркер берёт случайное число между «от» и «до» (для маскировки под живого человека).
-        Если поставить «от» = 0, задача может случайно завершиться после первого же ответа. По умолчанию «от» = «до», то есть лимит фиксированный.
-      </p>
+      {/*
+        Просмотр ЛС убран из НейроДиалогов (правка 18.08). Это была вторая копия
+        «Обзора аккаунта» (/panel/inbox): тот же список диалогов и то же поле ответа.
+        Модуль настраивает АВТООТВЕТЫ — читать и отвечать руками нужно на своём экране,
+        а держать одно и то же в двух местах значит чинить каждую правку дважды.
+      */}
 
-      <SectionCard icon={<Play size={18} />} title={running ? 'Мониторинг' : 'Запуск'} badge={running ? 'LIVE' : undefined}>
+      {/* Запуск — плавающая нижняя панель ПОСЛЕ списка диалогов, чтобы фиксированный бар их не перекрывал
+          (без обёртки-карточки: панель уходит в нижний бар, карточка осталась бы пустой). */}
+      <div id="sec-run" className="scroll-mt-24">
         <LaunchPanel
+          notify={{ on: notifyStatus, onChange: setNotifyStatus }}
           running={running}
           starting={starting}
           canStart={canStart}
-          onStart={() => { setViewTab(1); void start(buildSettings(), `${cfg.title} · ${selected.size} акк.`) }}
+          steps={!running ? <LaunchSteps steps={markCurrentStep([
+            { label: 'Аккаунты', done: accountIds.length > 0, anchor: 'sec-accounts' },
+            { label: 'Защита', done: true, optional: true, anchor: 'sec-protect' },
+            { label: 'Настройки', done: true, optional: true, anchor: 'sec-settings' },
+            { label: 'Запуск', done: false, anchor: 'sec-run' },
+          ])} /> : null}
+          blockedBy={!running && !canStart ? ['выберите аккаунты'] : []}
+          onStart={() => { void start(buildSettings(), `${cfg.title} · ${selected.size} акк.`) }}
           onStop={stop}
-          onSave={() => {
-            const name = window.prompt('Название пресета')
-            if (name?.trim()) void savePreset(name.trim(), buildSettings())
-          }}
-          primaryLabel={cfg.primaryAction ?? 'Запустить'}
+          onSave={handleSavePreset}
+          primaryLabel={cfg.primaryAction ?? 'Начать'}
           stats={[
             { icon: <MessagesSquare size={18} />, color: '#06b6d4', label: 'Диалогов', value: String(dialogs.length) },
             { icon: <Users size={18} />, color: '#7145ff', label: 'Аккаунтов', value: String(selected.size), warn: !selected.size },
@@ -432,137 +470,8 @@ export function NeuroDialogsModule() {
           warn={!canStart ? 'Выберите хотя бы один аккаунт' : undefined}
           presets={presets}
           onApplyPreset={applyPreset}
-          onDeletePreset={deletePreset}
         />
-        <div className="mt-4">
-          <Segmented options={['Переписки', logs.length ? `Логи · ${logs.length}` : 'Логи']} value={viewTab} onChange={setViewTab} size="sm" />
-        </div>
-      </SectionCard>
-
-      {viewTab === 1 ? (
-        <LogsPanel logs={logs} emptyText={cfg.logEmpty ?? 'Логов пока нет'} title="Логи выполнения" live={running} />
-      ) : (
-        <div className="card grid min-h-[520px] gap-0 overflow-hidden p-0 lg:grid-cols-[minmax(280px,340px)_1fr]">
-          <div className="flex flex-col border-b border-line lg:border-b-0 lg:border-r">
-            <div className="flex items-center gap-2 border-b border-line p-3">
-              <div className="relative min-w-0 flex-1">
-                <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
-                <input
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  className="input h-9 w-full pl-9 text-sm"
-                  placeholder="Поиск диалогов…"
-                />
-              </div>
-              <button
-                type="button"
-                onClick={() => void loadInbox()}
-                disabled={inboxLoading || !accountIds.length}
-                className="btn-icon h-9 w-9 shrink-0"
-                title="Обновить"
-              >
-                {inboxLoading ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={15} />}
-              </button>
-              <HelpButton topic="НейроДиалоги" className="h-9 w-9" />
-            </div>
-
-            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain lg:max-h-[calc(100vh-280px)]">
-              {!accountIds.length ? (
-                <p className="p-6 text-center text-sm text-muted">Выберите аккаунты — загрузим все ЛС</p>
-              ) : inboxLoading && !dialogs.length ? (
-                <div className="flex items-center justify-center gap-2 p-8 text-sm text-muted">
-                  <Loader2 size={18} className="animate-spin text-iris-400" /> Загрузка диалогов…
-                </div>
-              ) : filtered.length === 0 ? (
-                <p className="p-6 text-center text-sm text-muted">Диалоги не найдены</p>
-              ) : (
-                filtered.map((d) => (
-                  <DialogRow
-                    key={d.key}
-                    d={d}
-                    active={activeKey === d.key}
-                    onClick={() => void openDialog(d)}
-                  />
-                ))
-              )}
-            </div>
-          </div>
-
-          <div className="flex min-h-[420px] flex-col">
-            {activeDialog ? (
-              <>
-                <div className="flex items-center gap-3 border-b border-line p-3">
-                  <Avatar name={activeDialog.name} color={avatarColor(activeDialog.name)} size={38} />
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm font-bold text-fg">{activeDialog.name}</div>
-                    <div className="truncate text-xs text-muted">
-                      через {activeDialog.accountName}
-                      {activeDialog.username ? ` · @${activeDialog.username}` : ''}
-                    </div>
-                  </div>
-                  {activeDialog.username && (
-                    <a
-                      href={`https://t.me/${activeDialog.username}`}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="btn-icon h-9 w-9 shrink-0"
-                      title="Открыть в Telegram"
-                    >
-                      <ExternalLink size={15} />
-                    </a>
-                  )}
-                </div>
-
-                <div
-                  ref={scrollRef}
-                  className="flex-1 space-y-2 overflow-y-auto overscroll-contain bg-[rgb(var(--bg))] p-4"
-                >
-                  {msgsLoading ? (
-                    <div className="flex h-full items-center justify-center gap-2 text-sm text-muted">
-                      <Loader2 size={18} className="animate-spin" /> Загрузка сообщений…
-                    </div>
-                  ) : (
-                    messages.map((m) => <MessageBubble key={m.id} m={m} />)
-                  )}
-                </div>
-
-                <div className="flex items-center gap-2 border-t border-line p-3">
-                  <input
-                    value={reply}
-                    onChange={(e) => setReply(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && (e.preventDefault(), void send())}
-                    className="input min-w-0 flex-1"
-                    placeholder="Написать сообщение…"
-                    disabled={sending}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => void send()}
-                    disabled={sending || !reply.trim()}
-                    className="btn-iris h-[42px] shrink-0 px-4"
-                  >
-                    {sending ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
-                  </button>
-                </div>
-              </>
-            ) : (
-              <div className="flex flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
-                <div className="grid h-20 w-20 place-items-center rounded-full border border-line bg-elevated text-iris-400">
-                  <MessagesSquare size={34} />
-                </div>
-                <div>
-                  <div className="font-display text-base font-bold text-fg">Выберите диалог</div>
-                  <div className="mt-1 max-w-xs text-sm text-muted">
-                    {accountIds.length
-                      ? 'Слева все ЛС выбранных аккаунтов. Клик — мгновенное открытие переписки.'
-                      : 'Сначала выберите аккаунты в панели выше'}
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
+      </div>
     </div>
   )
 }

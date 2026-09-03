@@ -1,0 +1,174 @@
+/**
+ * §5.1: списание монет за выполненные действия модуля.
+ *
+ * Живёт отдельно от воркеров по двум причинам. Первая — `workers.js` общий с чужой
+ * дорожкой и правится с обеих сторон; биллинг там незаметно сломать проще всего.
+ * Вторая — это деньги: правило «на нуле задача встаёт» должно быть покрыто тестом,
+ * а не проверяться запуском реальных действий в Telegram.
+ */
+/**
+ * Цена «за действие» — берётся ТОЛЬКО из БД (eff.actionMap, источник — админка/price_overrides).
+ * `deps.actionMap` — подмена для тестов; иначе из priceStore.
+ * @returns {Promise<{actionMap:Object|null}>}
+ */
+async function resolvePricing(deps = {}) {
+  if (deps.actionMap != null) return { actionMap: deps.actionMap || null }
+  try {
+    const { effectivePrices } = await import('../priceStore.js')
+    const e = await effectivePrices()
+    return { actionMap: e.actionMap || null }
+  } catch { return { actionMap: null } }
+}
+/**
+ * MR-149 (созвон 19.08): цена действия = БАЗОВАЯ цена из БД. Точка. Без надстройки за текст
+ * (расчёт «база + текст по максимуму» удалён — база уже включает текст, картинку, маржу).
+ * Неизвестный модуль — 0 (не списываем по чужой ставке).
+ */
+function priceFor(moduleKey, { actionMap }) {
+  return actionMap && actionMap[moduleKey] != null ? (Number(actionMap[moduleKey]) || 0) : 0
+}
+
+/**
+ * Списать за N выполненных действий и поставить задачу на паузу, если монеты кончились.
+ *
+ * Списываем ПОСЛЕ действия, а не до: предоплата за непроизошедшее действие
+ * превращается в долг перед клиентом при первом же FloodWait. В минус баланс не
+ * уходит, поэтому на нуле задачу тормозим сами — иначе правило «при нуле модули
+ * стоят» действовало бы только на запуске, а начатая задача доработала бы даром.
+ *
+ * Именно ПАУЗА, а не стоп: прогресс, собранные результаты и позиция по целям
+ * сохраняются, и после пополнения человек жмёт «Продолжить» вместо того, чтобы
+ * начинать всё заново и платить за уже сделанное второй раз.
+ *
+ * Best-effort: сбой биллинга не роняет работающую задачу — действия в Telegram уже
+ * совершены, и откатить их нельзя.
+ *
+ * @param {object} task @param {object} store @param {number} actions
+ * @param {{changeCoins?:Function, getBalance?:Function}} [deps] подмена для тестов
+ */
+export async function chargeActions(task, store, actions = 1, deps = {}) {
+  try {
+    /*
+     * Фоновое обновление базы — за наш счёт (решение владельца 26.08).
+     *
+     * Клиент платит только тогда, когда ЗАПУСКАЕТ сам. Ревизия сохранённых запросов идёт
+     * нашим сервисным пулом и по нашей инициативе: списывать за неё с чьего-либо кошелька
+     * значит брать деньги за работу, которую человек не заказывал.
+     */
+    if (task?.initiator === 'auto-refresh') return null
+    const n = Math.max(0, Number(actions) || 0)
+    // MR-149 (созвон 19.08): цена действия = базовая цена из БД × N. Текст/картинка уже в
+    // базе — отдельно не считаем (токены ИИ тоже не списываются, tokenLedger — только журнал).
+    const pricing = await resolvePricing(deps)
+    // До тысячных: цена строки парсера — 0.005, и округление до сотых удваивало её.
+    const cost = Math.round(priceFor(task?.moduleKey, pricing) * n * 1000) / 1000
+    if (cost <= 0) return null
+    const balance = deps.changeCoins && deps.getBalance ? deps : await import('../balance.js')
+
+    /*
+     * Лимит расхода сотрудника (решение владельца 27.08). Кошелёк общий с владельцем —
+     * сотрудник наследует и деньги, и подписку, — но потратить он может не больше
+     * выданного. Проверяем ДО списания: узнать об исчерпанном лимите после того, как
+     * деньги владельца уже ушли, поздно.
+     *
+     * Ведёт себя как кончившийся баланс: задача встаёт на паузу с сохранением прогресса,
+     * а не падает с ошибкой. Владелец поднимает лимит — и она продолжается.
+     */
+    if (balance.spendLimit && task?.userId) {
+      const lim = await balance.spendLimit(task.userId).catch(() => null)
+      if (lim && lim.limit !== null && lim.left <= 0) {
+        if (!task.pauseRequested && !task.stopRequested) {
+          task.pauseRequested = true
+          await store?.appendLog?.(
+            task,
+            'info',
+            `Лимит расхода исчерпан: выдано ${lim.limit} ⚡, потрачено ${lim.spent} ⚡. `
+            + 'Задача на паузе, прогресс сохранён — попросите владельца увеличить лимит.',
+          )
+        }
+        return null
+      }
+    }
+
+    const res = await balance.changeCoins(-cost, `${task.moduleKey}: ${n} действ.`, task.userId)
+    // Считаем ФАКТИЧЕСКИ списанное, а не запрошенное: в минус кошелёк не уходит,
+    // и при остатке 0.002 с ценой 0.005 спишется 0.002. Прибавляя полную цену, мы
+    // предъявляли бы клиенту в счёте больше, чем с него взяли.
+    const charged = Math.abs(Number(res?.applied) || 0) || cost
+    // Сколько монет съела ЭТА задача — чтобы в Дашборде было видно цену запуска,
+    // а не только общий баланс, из которого не понять, куда ушло.
+    task.spentCoins = Math.round(((task.spentCoins || 0) + charged) * 1000) / 1000
+    const { coins } = await balance.getBalance(task.userId)
+    if (coins <= 0 && !task.pauseRequested && !task.stopRequested) {
+      task.pauseRequested = true
+      // Уровень info, а не error: кончившиеся деньги — не поломка модуля. С уровнем
+      // error задача попадала и в «Задач с ошибками», и в «Встали из-за баланса»,
+      // а в списке ошибок висела строка «Закончились монеты», хотя чинить нечего.
+      await store?.appendLog?.(task, 'info', 'Закончились монеты — задача на паузе. Пополните баланс и нажмите «Продолжить»: прогресс сохранён.')
+    }
+    return { charged, left: coins }
+  } catch {
+    return null // не роняем задачу из-за биллинга
+  }
+}
+
+/**
+ * Парсеры считают прогресс по длине результата, а не через `bumpProgress`. Списываем
+ * за НОВЫЕ собранные строки: без дельты каждый проход списывал бы за весь список
+ * заново, и один и тот же сбор стоил бы тем дороже, чем дольше идёт задача.
+ * @param {object} task @param {object} store
+ * @param {{changeCoins?:Function, getBalance?:Function}} [deps]
+ */
+export async function chargeCollected(task, store, deps = {}) {
+  const total = task?.results?.length || 0
+  const billed = task?.billedResults || 0
+  if (total <= billed) return null
+  task.billedResults = total
+  return chargeActions(task, store, total - billed, deps)
+}
+
+/**
+ * Вернуть деньги за строки, которых в итоге не осталось.
+ *
+ * Парсер копит результаты по ходу, а фильтры (AND-пересечение ключей, чёрный список,
+ * дедуп) применяются в конце и могут срезать список хоть до нуля. Живой прогон:
+ * собрано 53 → списано за 53 → пересечение оставило 0, и человек заплатил за пустой
+ * результат. Платим за то, что клиент реально получил.
+ *
+ * @param {object} task @param {object} store
+ * @param {{changeCoins?:Function, getBalance?:Function}} [deps]
+ */
+export async function refundShrunk(task, store, deps = {}) {
+  try {
+    const total = task?.results?.length || 0
+    const billed = task?.billedResults || 0
+    if (billed <= total) return null
+    const back = Math.round(priceFor(task?.moduleKey, await resolvePricing(deps)) * (billed - total) * 1000) / 1000
+    task.billedResults = total
+    if (back <= 0) return null
+    const balance = deps.changeCoins && deps.getBalance ? deps : await import('../balance.js')
+    await balance.changeCoins(back, `${task.moduleKey}: возврат за ${billed - total} отфильтрованных`, task.userId)
+    task.spentCoins = Math.max(0, Math.round(((task.spentCoins || 0) - back) * 1000) / 1000)
+    await store?.appendLog?.(task, 'info', `Возврат ${back} монет: фильтры убрали ${billed - total} из ${billed} собранных строк.`)
+    return { refunded: back }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Сколько стоит отдать N строк из базы.
+ *
+ * Решение владельца 26.08: выдача готового результата стоит КАК ОБЫЧНЫЙ СБОР — цена одна,
+ * скорость бонус. Считаем тем же прайсом и той же формулой, что и живой проход, иначе
+ * «как обычный сбор» разъедется с обычным сбором при первой же правке цен.
+ *
+ * @param {string} moduleKey @param {number} rows
+ * @returns {Promise<number>} цена в монетах
+ */
+export async function priceOfRows(moduleKey, rows, deps = {}) {
+  const n = Math.max(0, Math.trunc(Number(rows) || 0))
+  if (!n) return 0
+  const pricing = await resolvePricing(deps)
+  return Math.round(priceFor(moduleKey, pricing) * n * 1000) / 1000
+}

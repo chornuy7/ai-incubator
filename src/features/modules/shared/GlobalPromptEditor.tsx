@@ -5,8 +5,15 @@ import { useApp } from '@/mocks/store'
 import { fetchAiSettings, saveAiSettings } from '@/api/featuresApi'
 
 /**
- * (6) Глобальный системный промпт для ИИ. Применяется ко ВСЕЙ генерации во всех модулях.
- * На бэкенде он объединяется с промптом карточки (resolveSystemPrompt).
+ * (6) Системный промпт для ИИ: добавляется ко всей генерации во всех модулях —
+ * но только в ЗАПУСКАХ ЭТОГО ЧЕЛОВЕКА.
+ *
+ * До 27.08 текст был один на всю платформу: админ дописал себе строку — она уехала всем,
+ * включая чужие кабинеты (MR-185). Теперь он личный, поэтому и подписи говорят «в ваших
+ * запусках», а не «во всех»: прежняя формулировка теперь читалась бы как обещание менять
+ * поведение у соседей.
+ *
+ * На бэкенде объединяется с промптом карточки (resolveSystemPrompt).
  */
 export function GlobalPromptEditor() {
   const pushToast = useApp((s) => s.pushToast)
@@ -31,7 +38,9 @@ export function GlobalPromptEditor() {
       const s = await saveAiSettings({ globalSystemPrompt: draft })
       setPrompt(s.globalSystemPrompt || '')
       setOpen(false)
-      pushToast({ type: 'success', title: 'Глобальный промпт сохранён' })
+      // §9 (PROMPT-001): уведомляем «Активный промпт» в модулях, чтобы он сразу показал новый глобальный текст.
+      window.dispatchEvent(new Event('ai-settings-changed'))
+      pushToast({ type: 'success', title: 'Ваш системный промпт сохранён' })
     } catch (e) {
       pushToast({ type: 'error', title: 'Ошибка', desc: e instanceof Error ? e.message : '' })
     } finally { setLoading(false) }
@@ -43,7 +52,7 @@ export function GlobalPromptEditor() {
         <div className="flex min-w-0 items-center gap-2">
           <Globe2 size={16} className="shrink-0 text-iris-300" />
           <div className="min-w-0">
-            <div className="text-sm font-semibold text-fg">Глобальный системный промпт</div>
+            <div className="text-sm font-semibold text-fg">Мой системный промпт</div>
             <div className="truncate text-xs text-muted">{prompt ? prompt.slice(0, 80) : 'Не задан — применяется только промпт карточки'}</div>
           </div>
         </div>
@@ -53,8 +62,8 @@ export function GlobalPromptEditor() {
       <Modal
         open={open}
         onClose={() => setOpen(false)}
-        title="Глобальный системный промпт"
-        subtitle="Добавляется ко всем генерациям ИИ во всех модулях"
+        title="Мой системный промпт"
+        subtitle="Добавляется ко всем генерациям ИИ в ВАШИХ запусках. У других пользователей — свой."
         icon={<Sparkles size={22} />}
         size="lg"
         footer={

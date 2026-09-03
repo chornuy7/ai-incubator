@@ -1,0 +1,119 @@
+# Разовый перенос данных из файлов сервера в общую базу (MR-186) — вручную из Actions.
+#
+# Зачем это вообще. Шесть сторов переехали из файлов в базу: обращения поддержки, учёт
+# рабочего времени, база знаний с вложениями, папки целей, автоматизация, счётчик
+# переходов. Код после выката читает базу — а записи, сделанные ДО переезда, остались
+# лежать в /opt/ai-incubator/server/data. Они никуда не делись, но в панели их не видно,
+# пока их не поднять.
+#
+# Почему не шаг деплоя и не перенос при первом чтении. Перенос читает файлы КОНКРЕТНОЙ
+# машины. Локальные копии разработчиков ходят в ту же боевую базу, и файлы у каждого свои:
+# «само собой» выиграл бы тот, чья копия прочитала первой — его тестовые записи уехали бы
+# в прод, а настоящие серверные уже нет, потому что таблица непустая. Поэтому — руками,
+# один раз, с глазами на результат.
+#
+# Почему через SSH, а не на раннере. У раннера чистый чекаут из гита; файлов с данными
+# там нет вовсе — переносить было бы нечего. Данные лежат на сервере.
+#
+# Порядок: сначала миграции (workflow «migrate» или шаг деплоя), потом выкат кода
+# (он привозит на сервер сам скрипт), и только потом это.
+#
+# Секреты те же, что у деплоя: DEPLOY_SSH_KEY, DEPLOY_HOST, DEPLOY_USER.
+
+name: import-data
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Что сделать'
+        required: true
+        default: show
+        type: choice
+        options: [show, apply]
+      store:
+        description: 'Какой стор (all — все сразу)'
+        required: true
+        default: all
+        type: choice
+        options: [all, tickets, worklog, knowledge, kbfiles, folders, automation, links]
+
+# Два переноса одновременно читали бы одни и те же файлы и спорили за одни и те же
+# строки. Очередь, без отмены на середине.
+concurrency:
+  group: import-data
+  cancel-in-progress: false
+
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Проверка секретов
+        env:
+          KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          missing=""
+          [ -n "$KEY" ]  || missing="$missing DEPLOY_SSH_KEY"
+          [ -n "$HOST" ] || missing="$missing DEPLOY_HOST"
+          [ -n "$USER" ] || missing="$missing DEPLOY_USER"
+          if [ -n "$missing" ]; then
+            echo "::error::Не заданы секреты:$missing — те же, что у деплоя, см. .github/workflows/deploy.yml"
+            exit 1
+          fi
+
+      - name: SSH-ключ
+        env:
+          KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          HOST: ${{ secrets.DEPLOY_HOST }}
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+      # Перед ЛЮБОЙ записью — копия файлов с данными. Перенос ничего не удаляет и не
+      # перезаписывает, но правило простое: раз действие разовое и на проде, откатиться
+      # должно быть к чему.
+      - name: Бэкап данных перед переносом
+        if: inputs.mode == 'apply'
+        env:
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          ssh "$USER@$HOST" '
+            set -e
+            TS=$(date +%Y%m%d-%H%M%S)
+            if [ -d /opt/ai-incubator/server/data ]; then
+              B="/var/backups/ai-incubator/before-import-$TS"
+              mkdir -p "$B" && cp -r /opt/ai-incubator/server/data/. "$B"/ 2>/dev/null || true
+              echo "→ Копия данных: $B"
+            fi
+          '
+
+      - name: Перенос (${{ inputs.mode }}, ${{ inputs.store }})
+        env:
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          USER: ${{ secrets.DEPLOY_USER }}
+          MODE: ${{ inputs.mode }}
+          STORE: ${{ inputs.store }}
+        run: |
+          # `all` передаём как отсутствие аргумента: скрипт без имени стора берёт все.
+          [ "$STORE" = "all" ] && STORE_ARG="" || STORE_ARG="$STORE"
+          [ "$MODE" = "apply" ] && APPLY_ARG="--apply" || APPLY_ARG=""
+          ssh "$USER@$HOST" "
+            set -e
+            cd /opt/ai-incubator
+            if [ ! -f scripts/import-to-db.mjs ]; then
+              echo '::error::На сервере нет scripts/import-to-db.mjs — сначала выкатите код (workflow deploy).'
+              exit 1
+            fi
+            node scripts/import-to-db.mjs $STORE_ARG $APPLY_ARG
+          "
+
+      - name: Итог
+        if: inputs.mode == 'show'
+        run: |
+          echo "Это был ПОКАЗ без записи. Если числа выше выглядят правильно —"
+          echo "запустите этот же workflow ещё раз с режимом apply."

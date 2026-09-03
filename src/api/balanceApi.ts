@@ -1,0 +1,223 @@
+import { apiGet, apiPost, apiDelete } from './client'
+
+export interface Plan {
+  name: string
+  accountLimit: number
+}
+
+export interface Balance {
+  planId: string
+  plan: Plan
+  /** §5.4: купленные модули. 'all' — набор ещё не выбирали, открыто всё. */
+  modules: string[] | 'all'
+  /** Токены с точностью до ТЫСЯЧНЫХ: строка парсера стоит 0.005 (C2). */
+  coins: number
+  /** §11.4: денежный баланс ($) — им платят за подписку и покупают токены. */
+  usd?: number
+  /**
+   * Сотруднику деньги не показываем вовсе (27.08): `usd` не приходит, а `coins` урезаны
+   * его потолком расхода. `isSub` — признак, что перед нами такой урезанный вид.
+   */
+  isSub?: boolean
+  spendLimit?: number | null
+  spendLeft?: number | null
+  updatedAt: number
+  /** Срок подписки: timestamp окончания или null («бессрочно» / демо без периода). */
+  expiresAt?: number | null
+  /**
+   * Имя готового набора, если состав подписки в точности с ним совпал (MR-230).
+   * Считает сервер — теми же наборами, что подписывают операции в истории.
+   */
+  setName?: string | null
+  /**
+   * Почему подписка не продлилась: денег не хватило. Списания при этом НЕ было, поэтому в
+   * кошельке следа нет — сервер достаёт факт из журнала попыток.
+   */
+  renewFailed?: { at?: string; cost?: number; short?: number } | null
+  /**
+   * Когда подписку отменили (MR-228). Доступ при этом остаётся до конца оплаченного
+   * периода — отменяется только следующее списание, поэтому одного признака мало:
+   * дату конца смотрим в expiresAt, она не двигается.
+   */
+  canceledAt?: number | null
+}
+
+/** §5.1 (B2): баланс и тариф с сервера. До этого шапка показывала константу из моков. */
+export async function fetchBalance(): Promise<Balance> {
+  const data = await apiGet<{ ok: boolean; balance: Balance }>('/api/balance')
+  return data.balance
+}
+
+/** Пополнить (amount > 0), списать (amount < 0) или сменить тариф. Только админ. */
+/** `userId` — чей кошелёк править. Без него правится свой; чужой доступен только админу. */
+/** §11.4: купить токены за деньги — «$ ↓, токены ↑». */
+export async function buyTokens(usd: number, userId?: string): Promise<{ spentUsd: number; tokens: number; rate: number; balance: Balance }> {
+  return apiPost('/api/balance/buy-tokens', { usd, userId })
+}
+
+/** `amount` — токены (как раньше), `usd` — деньги (§11.4). */
+export async function changeBalance(patch: { amount?: number; usd?: number; planId?: string; reason?: string; userId?: string }): Promise<Balance> {
+  const data = await apiPost<{ ok: boolean; balance: Balance }>('/api/balance', patch)
+  return data.balance
+}
+
+/** Прайс с сервера: КОНЕЧНАЯ цена действия по модулям. Витрина не должна расходиться с тем, что спишется. */
+export interface PriceItem { key: string; title: string; price: number }
+export interface Pricing {
+  items: PriceItem[]
+  /** Цена действия по модулям. */
+  actions: Record<string, number>
+  /** MR-149: единая цена действия (= базовая, из БД). Витрина берёт её. */
+  actionsFull?: Record<string, number>
+  // MR-149: себестоимость и данные для её вывода (tokenUsd, avgTokens) клиенту НЕ отдаются —
+  // они только в админском /api/admin/prices. Клиент видит лишь конечную цену.
+  /** Пакеты пополнения — цена самой монеты. С сервера, не копией в вебе. */
+  packs?: { coins: number; price: number; best?: boolean }[]
+  currency?: string
+  /** §10.5: наценка на анализ изображения (расход vision ×N). Из админки, не из кода. */
+  imageMultiplier?: number
+}
+export async function fetchPricing(): Promise<Pricing> {
+  const r = await apiGet<Pricing & { ok: boolean }>('/api/pricing')
+  // Пробрасываем packs/currency — без них шапка всегда рисовала запасные пакеты,
+  // игнорируя цены с сервера (и правки монет из админки).
+  return {
+    items: r.items || [], actions: r.actions || {}, actionsFull: r.actionsFull || {},
+    packs: r.packs, currency: r.currency,
+    imageMultiplier: r.imageMultiplier,
+  }
+}
+
+/** §5.4: подписка на модули — витрина и то, что уже куплено. */
+export interface SubModule { key: string; title: string; price: number; gift?: number; action?: number; monthlyTokens?: number }
+export interface SubCost { sum: number; full: number; setup: string | null; discount: number; giftTokens?: number }
+export interface SubSetup {
+  id: string
+  name: string
+  hint: string
+  modules: string[]
+  discount: number
+  cost: SubCost
+  /** Набор, собранный админом: цена явная, удалить можно только его. */
+  custom?: boolean
+  price?: number
+}
+/** §11.2: период подписки из админки. discount — доля (0.2 = −20%). */
+export interface SubPeriod { unit: 'week' | 'month' | 'year' | string; count: number; discount: number }
+/** §11.2: длительность периода в месяцах (неделя ≈ 1/4 месяца) — для пересчёта цены. */
+export function periodMonths(p: SubPeriod): number {
+  return p.unit === 'year' ? p.count * 12 : p.unit === 'week' ? p.count / 4 : p.count
+}
+/** §11.2: длительность как существительное — «год», «6 месяцев». Для фраз «на …», «/ …»,
+ *  где подпись переключателя («На год») дала бы «на на год». */
+export function periodPhrase(p: SubPeriod): string {
+  if (p.unit === 'month' && p.count === 1) return 'месяц'
+  if (p.unit === 'year' && p.count === 1) return 'год'
+  return periodLabel(p)
+}
+/** §11.2: «На год» / «3 месяца» / «2 недели» — подпись для переключателя. */
+export function periodLabel(p: SubPeriod): string {
+  if (p.unit === 'month' && p.count === 1) return 'Помесячно'
+  if (p.unit === 'year' && p.count === 1) return 'На год'
+  const plural = (n: number, one: string, few: string, many: string) => {
+    const m10 = n % 10, m100 = n % 100
+    if (m10 === 1 && m100 !== 11) return one
+    if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return few
+    return many
+  }
+  const word = p.unit === 'week' ? plural(p.count, 'неделя', 'недели', 'недель')
+    : p.unit === 'year' ? plural(p.count, 'год', 'года', 'лет')
+      : plural(p.count, 'месяц', 'месяца', 'месяцев')
+  return `${p.count} ${word}`
+}
+export interface Subscription { items: SubModule[]; setups: SubSetup[]; currency: string; mine: string[] | 'all'   /** Годовая скидка (эффективная, из админки). */
+  annualDiscount?: number
+  /** §11.2: периоды со скидками — из них строится переключатель. */
+  periods?: SubPeriod[]
+}
+
+export async function fetchSubscription(): Promise<Subscription> {
+  const r = await apiGet<Subscription & { ok: boolean }>('/api/subscription')
+  return { items: r.items || [], setups: r.setups || [], currency: r.currency || '$', mine: r.mine ?? 'all', annualDiscount: r.annualDiscount, periods: r.periods }
+}
+
+export async function quoteSubscription(modules: string[]): Promise<SubCost> {
+  return apiPost<SubCost>('/api/subscription/quote', { modules })
+}
+
+/** Оформить подписку на набор. `months` — период (1 или 12); 0/пусто — без срока (демо). */
+export async function saveSubscription(modules: string[] | 'all', months = 0): Promise<Balance> {
+  const r = await apiPost<{ balance: Balance }>('/api/subscription', { modules, months })
+  return r.balance
+}
+
+/** §10.4: админ выдаёт/снимает модули КОНКРЕТНОМУ юзеру (userId — admin-only на сервере). */
+export async function saveUserModules(userId: string, modules: string[] | 'all'): Promise<Balance> {
+  const r = await apiPost<{ balance: Balance }>('/api/subscription', { modules, userId })
+  return r.balance
+}
+
+/** §5.1: операция по кошельку — «за что списали». */
+export interface WalletEntry {
+  ts: number
+  userId: string
+  amount: number
+  before: number
+  after: number
+  reason: string
+  /**
+   * §11.4: чем операция была — деньгами или токенами. Сервер это пишет с самого начала,
+   * а витрина поле не читала и рисовала ⚡ на всём подряд, включая «Пополнение $»
+   * (правка 27.08: «где доллары — доллары, где токены — токены значок»).
+   */
+  currency?: 'usd' | 'coins'
+  /**
+   * MR-230: состав подписки на момент операции — ключи модулей.
+   *
+   * Нужен, чтобы свёрнутое «и ещё 11» можно было развернуть: из текста причины
+   * эти одиннадцать не достать, их там нет. У строк, записанных до миграции
+   * 2026-08-31, поля нет — такие показываем свёрнутыми, без разворота.
+   */
+  modules?: string[]
+}
+
+/**
+ * Кто сколько потратил из кошелька (27.08). При общем балансе владелец видит траты всех
+ * своих сотрудников; строка `isOwner` — его собственные списания.
+ */
+export interface SpendByUser { actorId: string; name: string; spent: number; ops: number; isOwner: boolean }
+export async function fetchSpendByUser(days = 30): Promise<{ days: number; rows: SpendByUser[] }> {
+  const r = await apiGet<{ ok: boolean; days: number; rows: SpendByUser[] }>(`/api/balance/spend-by-user?days=${days}`)
+  return { days: r.days, rows: r.rows || [] }
+}
+
+export async function fetchWalletHistory(limit = 50, userId?: string): Promise<WalletEntry[]> {
+  const q = new URLSearchParams({ limit: String(limit) })
+  if (userId) q.set('userId', userId)
+  const r = await apiGet<{ ok: boolean; rows: WalletEntry[] }>(`/api/balance/history?${q}`)
+  return r.rows || []
+}
+
+/** §5.4: набор под клиента — админ выбирает модули и называет цену. */
+/** Наборы админа списком — без всей витрины (MR-151). */
+export async function fetchBundles(): Promise<SubSetup[]> {
+  const r = await apiGet<{ ok: boolean; bundles: SubSetup[] }>('/api/bundles')
+  return (r.bundles || []).map((b) => ({ ...b, custom: true }))
+}
+
+export async function createBundle(input: { name: string; hint?: string; modules: string[]; price: number }): Promise<void> {
+  await apiPost('/api/bundles', input)
+}
+
+export async function deleteBundle(id: string): Promise<void> {
+  await apiDelete(`/api/bundles/${id}`)
+}
+
+/**
+ * MR-228: отменить подписку. Возврата денег нет, доступ остаётся до конца оплаченного
+ * периода — отменяется только следующее списание.
+ */
+export async function cancelSubscription(): Promise<Balance | null> {
+  const r = await apiPost<{ ok: boolean; balance: Balance | null }>('/api/subscription/cancel', {})
+  return r.balance
+}

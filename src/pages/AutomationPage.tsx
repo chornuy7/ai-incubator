@@ -1,19 +1,29 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
-  CalendarClock, Plus, Play, Trash2, Pencil, Power, Clock, Loader2,
-} from 'lucide-react'
-import { PageHeader, Modal, Select, Segmented, Switch, EmptyState, Badge } from '@/shared/ui'
+  CalendarClock, Plus, Play, Trash2, Pencil, Power, Clock, Loader2, ArrowLeft } from 'lucide-react'
+import { PageHeader, Card, Select, Segmented, Switch, EmptyState, Badge } from '@/shared/ui'
+import { fetchCampaigns, type Campaign } from '@/api/campaignsApi'
+import { HelpButton } from '@/features/neuro-commenting/moduleUi'
+import { confirmDialog } from '@/shared/lib/dialog'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
-import { NumberField } from '@/features/modules/shared'
-import { MODULES } from '@/shared/config/modules'
+import { NumberField, FolderPicker } from '@/features/modules/shared'
+import { MODULES, isCombatModule, combatConfirmText } from '@/shared/config/modules'
 import { useApp } from '@/mocks/store'
 import {
   fetchAutomationRules, createAutomationRule, updateAutomationRule, deleteAutomationRule, runAutomationRuleNow,
   type AutomationRule, type AutomationRuleInput,
 } from '@/api/automationApi'
 
-// Модули, которые планировщик умеет запускать через универсальный реестр.
-const AUTOMATABLE = ['neuro-commenting', 'neuro-chatting', 'mass-react', 'mass-looking', 'warming']
+// Планировщик умеет запускать любой модуль из реестра (server/modules/registry.js) — включая парсеры.
+const AUTOMATABLE = [
+  'neuro-commenting', 'neuro-chatting', 'mass-react', 'mass-looking', 'warming', 'neuro-dialogs', 'ggr',
+  'mailing', 'autoposting', 'parsing', 'parsing-groups', 'parsing-users', 'parsing-messages', 'parsing-comments',
+]
+// Модули, которым нужны цели (каналы/группы/номера) — server MODULE_DEFS.requiresTargets.
+const NEEDS_TARGETS = new Set([
+  'neuro-commenting', 'neuro-chatting', 'mass-react', 'mass-looking',
+  'mailing', 'autoposting', 'parsing-users', 'parsing-messages', 'parsing-comments',
+])
 
 const SCHEDULE_TYPES = ['Разово', 'Интервал', 'Ежедневно']
 
@@ -50,13 +60,23 @@ export function AutomationPage() {
   }
 
   const remove = async (r: AutomationRule) => {
-    if (!window.confirm(`Удалить правило «${r.name}»?`)) return
+    if (!(await confirmDialog({ title: 'Удалить правило?', message: `«${r.name}» будет удалено.`, confirmLabel: 'Удалить', tone: 'danger' }))) return
     try { await deleteAutomationRule(r.id); await reload(); pushToast({ type: 'success', title: 'Правило удалено' }) } catch (e) {
       pushToast({ type: 'error', title: 'Ошибка', desc: e instanceof Error ? e.message : '' })
     }
   }
 
   const runNow = async (r: AutomationRule) => {
+    // Досрочный запуск правила = те же реальные действия в Telegram, что и запуск из
+    // модуля. Там подтверждение спрашивают (LiveModule, TasksPage), а здесь кнопка ▶
+    // стреляла сразу (прогон 21–22.07, тест 6.12).
+    const mk = r.moduleKey || ''
+    if (isCombatModule(mk) && !(await confirmDialog({
+      title: 'Реальные действия в Telegram',
+      message: combatConfirmText(mk),
+      confirmLabel: 'Запустить',
+      tone: 'danger',
+    }))) return
     try {
       const taskId = await runAutomationRuleNow(r.id)
       await reload()
@@ -72,7 +92,7 @@ export function AutomationPage() {
         title="Автоматизация"
         subtitle="Планирование запусков модулей по времени: выберите аккаунты, модуль и расписание"
         icon={<CalendarClock size={22} />}
-        actions={<button onClick={() => setEditing('new')} className="btn-primary h-10"><Plus size={16} /> Новое правило</button>}
+        actions={<div className="flex items-center gap-2"><HelpButton topic="automation" className="h-10 w-10" /><button onClick={() => setEditing('new')} className="btn-primary h-10"><Plus size={16} /> Новое правило</button></div>}
       />
 
       {loading ? (
@@ -131,6 +151,12 @@ function RuleEditor({ rule, onClose, onSaved }: {
   const pushToast = useApp((s) => s.pushToast)
   const [name, setName] = useState(rule?.name ?? '')
   const [moduleKey, setModuleKey] = useState(rule?.moduleKey ?? AUTOMATABLE[0])
+  // §6: правило крепится к кампании — модуль/аккаунты/шаблон берутся из неё.
+  const [campaigns, setCampaigns] = useState<Campaign[]>([])
+  const [campaignId, setCampaignId] = useState(rule?.campaignId ?? '')
+  useEffect(() => {
+    void fetchCampaigns().then(({ campaigns: cs }) => setCampaigns(cs.filter((c) => c.status !== 'done'))).catch(() => {})
+  }, [])
   const [selected, setSelected] = useState<Set<string>>(new Set(rule?.accountIds ?? []))
   const [targetsText, setTargetsText] = useState((rule?.settings?.targets ?? []).join('\n'))
   const [maxActions, setMaxActions] = useState(rule?.settings?.maxActions ?? 50)
@@ -146,10 +172,14 @@ function RuleEditor({ rule, onClose, onSaved }: {
   })
   const [saving, setSaving] = useState(false)
 
-  const needsTargets = useMemo(() => ['neuro-commenting', 'neuro-chatting', 'mass-react', 'mass-looking'].includes(moduleKey), [moduleKey])
+  const needsTargets = useMemo(() => NEEDS_TARGETS.has(moduleKey), [moduleKey])
 
   const save = async () => {
-    if (!selected.size) return pushToast({ type: 'error', title: 'Выберите аккаунты' })
+    // При выбранной кампании аккаунты НЕ обязательны: resolveRuleTarget
+    // (automation/store.js) сам возьмёт закреплённые за кампанией, если у правила
+    // своих нет. Раньше форма требовала их вручную, хотя подсказка обещала «модуль,
+    // аккаунты и шаблон — из кампании» — бэкенд это умел, а UI не пускал (тест 6.10).
+    if (!campaignId && !selected.size) return pushToast({ type: 'error', title: 'Выберите аккаунты' })
     const targets = targetsText.split(/[\n,\s]+/).map((s) => s.trim().replace(/^@/, '')).filter(Boolean)
     if (needsTargets && !targets.length) return pushToast({ type: 'error', title: 'Добавьте цели' })
     if (minActions && maxActions && minActions > maxActions) return pushToast({ type: 'error', title: 'Минимум больше максимума' })
@@ -163,6 +193,7 @@ function RuleEditor({ rule, onClose, onSaved }: {
     const input: AutomationRuleInput = {
       name: name.trim() || 'Правило автоматизации',
       moduleKey,
+      campaignId: campaignId || null,
       accountIds: [...selected],
       settings: {
         targets,
@@ -190,18 +221,16 @@ function RuleEditor({ rule, onClose, onSaved }: {
     } finally { setSaving(false) }
   }
 
+  // §6: правило открывается вьюшкой, а не модалкой поверх списка.
   return (
-    <Modal
-      open
-      onClose={onClose}
-      title={rule ? 'Редактировать правило' : 'Новое правило автоматизации'}
-      icon={<CalendarClock size={22} />}
-      size="xl"
-      footer={<>
-        <button onClick={onClose} className="btn-ghost h-10">Отмена</button>
-        <button onClick={save} disabled={saving} className="btn-primary h-10 disabled:opacity-50">{saving ? <Loader2 size={16} className="animate-spin" /> : <Power size={16} />} Сохранить</button>
-      </>}
-    >
+    <div>
+      <button onClick={onClose} className="btn-ghost mb-3 h-9"><ArrowLeft size={15} /> Назад к автоматизации</button>
+      <PageHeader
+        title={rule ? 'Редактировать правило' : 'Новое правило автоматизации'}
+        subtitle="Правило крепится к кампании: модуль, аккаунты и шаблон берутся из неё"
+        icon={<CalendarClock size={22} />}
+      />
+      <Card className="p-4">
       <div className="space-y-4">
         <div className="grid gap-3 sm:grid-cols-2">
           <div>
@@ -209,8 +238,26 @@ function RuleEditor({ rule, onClose, onSaved }: {
             <input value={name} onChange={(e) => setName(e.target.value)} className="input" placeholder="Утренний прогрев" />
           </div>
           <div>
-            <label className="label">Модуль</label>
-            <Select value={moduleKey} onChange={setModuleKey} options={AUTOMATABLE.map((k) => ({ value: k, label: MODULES[k]?.title ?? k }))} />
+            <label className="label">Кампания <span className="font-normal normal-case text-faint">(модуль и аккаунты возьмутся из неё)</span></label>
+            <Select
+              value={campaignId}
+              onChange={setCampaignId}
+              placeholder="Без кампании (голый модуль)"
+              options={[{ value: '', label: 'Без кампании (голый модуль)' }, ...campaigns.map((c) => ({ value: c.id, label: `${c.name} · ${MODULES[c.moduleKey]?.title ?? c.moduleKey}` }))]}
+            />
+            {campaignId && (() => {
+              const c = campaigns.find((x) => x.id === campaignId)
+              const n = (c?.accountIds || []).length
+              return (
+                <p className="mt-1 text-[11px] text-muted">
+                  Модуль, аккаунты и шаблон — из кампании ({n ? `${n} акк.` : 'аккаунтов пока нет'}).
+                  Настройки ниже перекроют шаблон кампании; выбирать аккаунты вручную не обязательно —
+                  но если выберете, они будут приоритетнее.
+                </p>
+              )
+            })()}
+            <label className="label mt-3">Модуль{campaignId ? ' (из кампании)' : ''}</label>
+            <Select value={campaignId ? (campaigns.find((c) => c.id === campaignId)?.moduleKey ?? moduleKey) : moduleKey} onChange={setModuleKey} options={AUTOMATABLE.map((k) => ({ value: k, label: MODULES[k]?.title ?? k }))} />
           </div>
         </div>
 
@@ -218,7 +265,14 @@ function RuleEditor({ rule, onClose, onSaved }: {
 
         {needsTargets && (
           <div>
-            <label className="label">Цели (каналы/группы, по одному на строку)</label>
+            <label className="label">Цели (каналы/группы) — из папки или по одному на строку</label>
+            <FolderPicker
+              targets={targetsText.split(/[\n,\s]+/).map((s) => s.trim()).filter(Boolean)}
+              onLoad={(t) => setTargetsText((prev) => {
+                const cur = prev.split(/[\n,\s]+/).map((s) => s.trim()).filter(Boolean)
+                return [...new Set([...t.map((x) => x.replace(/^@/, '')), ...cur])].join('\n')
+              })}
+            />
             <textarea value={targetsText} onChange={(e) => setTargetsText(e.target.value)} rows={3} className="input resize-none font-mono text-sm" placeholder="@channel или t.me/channel" />
           </div>
         )}
@@ -253,6 +307,11 @@ function RuleEditor({ rule, onClose, onSaved }: {
 
         <p className="text-xs text-muted">Планировщик запускает задачу в назначенное время, соблюдая блокировки аккаунтов. Если аккаунты заняты — запуск будет пропущен с записью в статус.</p>
       </div>
-    </Modal>
+      <div className="mt-4 flex justify-end gap-2 border-t border-line pt-4">
+        <button onClick={onClose} className="btn-ghost h-10">Отмена</button>
+        <button onClick={save} disabled={saving} className="btn-primary h-10 disabled:opacity-50">{saving ? <Loader2 size={16} className="animate-spin" /> : <Power size={16} />} Сохранить</button>
+      </div>
+      </Card>
+    </div>
   )
 }

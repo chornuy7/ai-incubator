@@ -46,22 +46,28 @@
       radial-gradient(900px 500px at -5% 5%, rgba(14, 196, 100, 0.08), transparent 70%);
     background-size: 26px 26px, 100% 100%, 100% 100%;
   }
+  /*
+   * Ползунок должен быть ВИДЕН (правка 27.08: «почему у меня в логах нету ползунка, чтобы
+   * листать логи»). Он был: цвет полосы брался из `--line` (#222a3a) — это цвет границ, и
+   * на панели `--elevated` (#161c28) он почти неотличим от фона. Список прокручивался, но
+   * ничто на экране об этом не говорило, и логи выглядели обрезанными на пятой строке.
+   */
   * {
     scrollbar-width: thin;
-    scrollbar-color: rgb(var(--line)) transparent;
+    scrollbar-color: rgb(var(--muted) / 0.55) transparent;
   }
   *::-webkit-scrollbar {
-    width: 9px;
-    height: 9px;
+    width: 10px;
+    height: 10px;
   }
   *::-webkit-scrollbar-thumb {
-    background: rgb(var(--line));
+    background: rgb(var(--muted) / 0.55);
     border-radius: 9px;
     border: 2px solid transparent;
     background-clip: padding-box;
   }
   *::-webkit-scrollbar-thumb:hover {
-    background: rgb(var(--muted) / 0.5);
+    background: rgb(var(--muted) / 0.85);
     background-clip: padding-box;
   }
 }
@@ -101,11 +107,32 @@
   .btn-icon {
     @apply inline-flex h-9 w-9 items-center justify-center rounded-lg border border-line bg-elevated text-muted transition-colors hover:border-spark-500/40 hover:text-fg;
   }
+  /* Кнопка управления задачей (старт/пауза/стоп/перезапуск) на карточке и в шапке деталей.
+     Намеренно НЕ .btn-icon: у того в ховер зашиты зелёная рамка и белый текст, а
+     `.btn-icon:hover` (специфичность 0-2-0) перебивает утилиту тона `.text-amber-300`
+     (0-1-0). На наведении «Пауза» превращалась в белую иконку в ЗЕЛЁНОЙ рамке на янтарном
+     фоне — три цвета в кнопке 32×32; тот же ховер срабатывал и на выключенных кнопках,
+     обещая действие, которого нет. Здесь ховер-цветов нет вообще: тон (иконка + фон +
+     рамка) навешивается утилитами на месте, поэтому кнопка всегда одного оттенка.  */
+  .btn-ctl {
+    @apply inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-line bg-elevated
+      transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-white/25 disabled:cursor-not-allowed;
+  }
+  /* Красный вариант icon-кнопки для необратимого удаления (корзина). */
+  .btn-icon-danger {
+    @apply inline-flex h-9 w-9 items-center justify-center rounded-lg border border-rose-500/40 bg-rose-500/10 text-rose-300 transition-colors hover:bg-rose-500/20 hover:text-rose-200;
+  }
 
   /* ── Формы ── */
   .input {
     @apply w-full rounded-xl border border-line bg-elevated px-3.5 py-2.5 text-sm text-fg placeholder:text-faint
       transition-colors focus:border-spark-500/70 focus:outline-none focus:ring-4 focus:ring-spark-500/10;
+  }
+  /* Нативный <select> с .input клиппил текст: у него меньше вертикального запаса, чем
+     у текстового поля, а фиксированные h-8/h-9 вместе с py-2.5 срезали низ строки.
+     Меньший вертикальный padding именно для select — текст помещается на любой высоте. */
+  select.input {
+    @apply py-1.5;
   }
   .label {
     @apply mb-1.5 block text-xs font-semibold uppercase tracking-wide text-muted;
